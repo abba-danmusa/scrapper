@@ -172,41 +172,7 @@ const initialSources: Source[] = [
   },
 ];
 
-const initialArticles: Article[] = [
-  {
-    id: 1,
-    title: "Food security assessment flags worsening conditions in northeast Nigeria",
-    source: "ReliefWeb",
-    url: "https://example.org/reliefweb-food-security",
-    date: "2026-06-17",
-    region: "NE Region",
-    subject: "Food Security",
-    confidence: "High",
-    status: "Needs Review",
-  },
-  {
-    id: 2,
-    title: "Armed attack affects farming communities in Zamfara",
-    source: "Daily Trust",
-    url: "https://example.org/zamfara-farmers",
-    date: "2026-06-13",
-    region: "NW Region",
-    subject: "Security",
-    confidence: "Medium",
-    status: "Needs Review",
-  },
-  {
-    id: 3,
-    title: "Health partners monitor cholera risks in displacement affected areas",
-    source: "UNICEF",
-    url: "https://example.org/borno-health",
-    date: "2026-06-12",
-    region: "Borno",
-    subject: "Health",
-    confidence: "High",
-    status: "Queued",
-  },
-];
+const initialArticles: Article[] = [];
 
 const reportSections = [
   "Executive Summary",
@@ -246,40 +212,10 @@ const emptyArticleForm: Omit<Article, "id" | "confidence" | "status"> = {
   title: "",
   source: "ReliefWeb",
   url: "",
-  date: "2026-06-18",
+  date: new Date().toISOString().slice(0, 10),
   region: "NE Region",
   subject: "Security",
 };
-
-function formatDate(date: string) {
-  return new Intl.DateTimeFormat("en-GB", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  }).format(new Date(`${date}T00:00:00`));
-}
-
-function toggleListValue(values: string[], value: string) {
-  return values.includes(value)
-    ? values.filter((item) => item !== value)
-    : [...values, value];
-}
-
-function getReportSection(subject: string): ReportSection {
-  if (subject === "Government Response" || subject === "Humanitarian Response") {
-    return "Government and Humanitarian Response";
-  }
-
-  if (subject === "Access Constraints") {
-    return "Access Constraints";
-  }
-
-  if (subject === "Security" || subject === "Economy") {
-    return "Regional Situation Overview";
-  }
-
-  return "Multisectoral Analysis";
-}
 
 function getConfidenceForSource(source?: Source): Confidence {
   if (!source) {
@@ -304,6 +240,18 @@ function createExtractedFacts(article: Article) {
     `Subject tag: ${article.subject}`,
     `Source: ${article.source}`,
   ];
+}
+
+function formatDate(date: string) {
+  try {
+    return new Intl.DateTimeFormat("en-GB", {
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+    }).format(new Date(`${date}T00:00:00`));
+  } catch {
+    return date;
+  }
 }
 
 function createExtractedSummary(article: Article) {

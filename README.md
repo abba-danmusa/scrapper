@@ -1,3 +1,77 @@
+# Scrapper
+
+This project ingests news from Nigerian outlets and reputable international sources and provides a dashboard to review and assemble reports.
+
+Quick start (development):
+
+1. From workspace root, start the scraper server:
+
+```bash
+cd server
+node index.js
+```
+
+2. In another terminal, start the frontend:
+
+```bash
+npm run dev
+```
+
+By default the scheduler is disabled. To enable periodic ingestion set:
+
+```bash
+export ENABLE_SCHEDULER=true
+export INGEST_INTERVAL_MINUTES=60
+node server/index.js
+```
+
+### ACLED authentication
+
+This project supports ACLED OAuth authentication for programmatic ingestion.
+
+Set these environment variables before starting the server:
+
+```bash
+export ACLED_USERNAME="your-email@example.com"
+export ACLED_PASSWORD="your-acled-password"
+```
+
+The pipeline will automatically request an access token from `https://acleddata.com/oauth/token`, store it in `server/data/acled-token.json`, and refresh it as needed.
+
+If you prefer a direct browser or Postman login flow, ACLED also supports session login via:
+
+```bash
+POST https://acleddata.com/user/login?_format=json
+Content-Type: application/json
+
+{
+  "name": "your-email@example.com",
+  "pass": "your-password"
+}
+```
+
+For script-based access, OAuth is recommended:
+
+```bash
+curl -X POST "https://acleddata.com/oauth/token" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "username=EMAIL@DOMAIN.COM" \
+  -d "password=YOUR_PASSWORD" \
+  -d "grant_type=password" \
+  -d "client_id=acled" \
+  -d "scope=authenticated"
+```
+
+Then use the returned bearer token:
+
+```bash
+curl -H "Authorization: Bearer ACCESS-TOKEN-HERE" \
+  -X GET \
+  "https://acleddata.com/api/acled/read?limit=10"
+```
+
+This repository uses OAuth for your server-side ingestion, so you don’t need to manually paste tokens into code.
+
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
 ## Getting Started

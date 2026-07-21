@@ -7,16 +7,28 @@ async function searchRss({ subjects = [], regions = [] }) {
     }
   });
 
-  const feedUrls = [
-    'https://www.dailytrust.com.ng/feed/',
-    'https://humanglemedia.com/feed/'
+  const feedSources = [
+    // Nigerian outlets
+    { url: 'https://www.dailytrust.com.ng/feed/', name: 'Daily Trust' },
+    { url: 'https://humanglemedia.com/feed/', name: 'HumAngle' },
+    { url: 'https://www.premiumtimesng.com/feed/', name: 'Premium Times' },
+    { url: 'https://www.thecable.ng/feed', name: 'TheCable' },
+    { url: 'https://punchng.com/feed/', name: 'Punch' },
+    { url: 'https://www.vanguardngr.com/feed/', name: 'Vanguard' },
+
+    // Regional / international
+    { url: 'http://feeds.bbci.co.uk/news/world/africa/rss.xml', name: 'BBC Africa' },
+    { url: 'https://www.aljazeera.com/xml/rss/all.xml', name: 'Al Jazeera' },
+    { url: 'https://www.reuters.com/rssFeed/africaNews', name: 'Reuters Africa' },
+    { url: 'https://www.unicef.org/rss/en/news.xml', name: 'UNICEF' },
+    { url: 'https://www.who.int/rss-feeds/news-english.xml', name: 'WHO' }
   ];
 
   const allItems = [];
 
-  for (const feedUrl of feedUrls) {
+  for (const feedSource of feedSources) {
     try {
-      const feed = await parser.parseURL(feedUrl);
+      const feed = await parser.parseURL(feedSource.url);
       const items = (feed.items || []).map((item) => {
         const text = `${item.title || ''} ${item.contentSnippet || ''} ${item.content || ''}`;
         const region = pickRegion(text, regions);
@@ -24,7 +36,7 @@ async function searchRss({ subjects = [], regions = [] }) {
 
         return {
           title: item.title || 'Untitled RSS item',
-          source: feed.title || 'RSS Source',
+          source: feed.title || feedSource.name || 'RSS Source',
           url: item.link || '',
           date: item.pubDate ? item.pubDate.slice(0, 10) : new Date().toISOString().slice(0, 10),
           region,
@@ -35,7 +47,7 @@ async function searchRss({ subjects = [], regions = [] }) {
 
       allItems.push(...items);
     } catch (error) {
-      console.warn(`RSS feed failed: ${feedUrl}`, error.message);
+      console.warn(`RSS feed failed: ${feedSource.url} (${feedSource.name})`, error && error.message ? error.message : error);
     }
   }
 
