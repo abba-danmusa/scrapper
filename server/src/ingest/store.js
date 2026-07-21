@@ -41,10 +41,20 @@ function persistArticles(articles) {
         if (!client) return;
         const db = client.db();
         const collection = db.collection('articles');
-        // insert documents with a snapshotId so downstream can query
+
+        if (articles.length === 0) return null;
+
         const docs = articles.map((a) => ({ ...a, ingestedAt: new Date(), snapshot: payload.generatedAt }));
-        return collection.insertMany(docs, { ordered: false }).catch((err) => {
-          console.warn('Mongo insertMany failed', err && err.message ? err.message : err);
+        const operations = docs.map((doc) => ({
+          updateOne: {
+            filter: { url: doc.url },
+            update: { $set: doc },
+            upsert: true
+          }
+        }));
+
+        return collection.bulkWrite(operations, { ordered: false }).catch((err) => {
+          console.warn('Mongo bulkWrite failed', err && err.message ? err.message : err);
         });
       })
       .catch((err) => console.warn('Mongo persist failed', err && err.message ? err.message : err));
