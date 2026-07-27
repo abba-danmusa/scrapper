@@ -552,6 +552,7 @@ export default function MonitorDashboard() {
   const [healthMessage, setHealthMessage] = useState("Checking scraper health...");
   const [serverWorkspaces, setServerWorkspaces] = useState<WorkspaceSummary[]>([]);
   const [acledTokenStatus, setAcledTokenStatus] = useState<AcledTokenStatus>({ ok: false, token: null });
+  const [activeModal, setActiveModal] = useState<"workspace" | "health" | "draft" | null>(null);
 
   useEffect(() => {
     if (initialWorkspace) {
@@ -646,6 +647,55 @@ export default function MonitorDashboard() {
     [sources],
   );
   const approvedArticles = articles.filter((article) => article.status === "Approved");
+  const processingQueue = articles.filter((article) => article.status === "Queued");
+  const reviewQueue = articles.filter(
+    (article) => article.status === "Processed" || article.status === "Needs Review",
+  );
+
+  const workflowProgress = useMemo(() => {
+    let progress = 0;
+
+    if (parameters.title.trim()) {
+      progress += 15;
+    }
+    if (parameters.startDate && parameters.endDate) {
+      progress += 15;
+    }
+    if (enabledSources.length > 0) {
+      progress += 15;
+    }
+    if (processingQueue.length + reviewQueue.length + approvedArticles.length > 0) {
+      progress += 20;
+    }
+    if (reviewQueue.length > 0) {
+      progress += 15;
+    }
+    if (approvedArticles.length > 0) {
+      progress += 20;
+    }
+
+    return Math.min(100, progress);
+  }, [approvedArticles, enabledSources.length, parameters.endDate, parameters.startDate, parameters.title, processingQueue.length, reviewQueue.length]);
+
+  const nextRecommendedAction = useMemo(() => {
+    if (processingQueue.length > 0) {
+      return "Process the queued items to prepare evidence for review.";
+    }
+
+    if (reviewQueue.length > 0) {
+      return "Review the prepared items and approve the strongest evidence.";
+    }
+
+    if (approvedArticles.length > 0) {
+      return "Export the report draft or publish the workspace.";
+    }
+
+    if (enabledSources.length > 0) {
+      return "Run the selected sources to gather new article material.";
+    }
+
+    return "Enable at least one source to start building the report.";
+  }, [approvedArticles.length, enabledSources.length, processingQueue.length, reviewQueue.length]);
 
   const filteredArticles = useMemo(
     () =>
@@ -656,11 +706,6 @@ export default function MonitorDashboard() {
           enabledSources.some((source) => source.name === article.source),
       ),
     [articles, enabledSources, parameters.regions, parameters.subjects],
-  );
-
-  const processingQueue = articles.filter((article) => article.status === "Queued");
-  const reviewQueue = articles.filter(
-    (article) => article.status === "Processed" || article.status === "Needs Review",
   );
 
   const reportDraft = useMemo(() => {
@@ -1218,200 +1263,7 @@ export default function MonitorDashboard() {
       <div className="mx-auto grid max-w-7xl gap-5 px-5 py-5 sm:px-8 xl:grid-cols-[360px_1fr]">
         <aside className="space-y-5">
           <section className="border border-zinc-200 bg-white p-4">
-            <h2 className="text-lg font-semibold">7. Persistence</h2>
-            <p className="mt-1 text-sm text-zinc-600">
-              Workspace changes are saved in this browser automatically and can be persisted as a draft or published report.
-            </p>
-            <div className="mt-3 inline-flex rounded-full bg-zinc-100 px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.12em] text-zinc-700">
-              Status: {workspaceStatus === "published" ? "Published" : "Draft"}
-            </div>
-            {workspacePublishedAt ? (
-              <p className="mt-2 text-xs text-zinc-500">
-                Published {new Date(workspacePublishedAt).toLocaleString()}
-              </p>
-            ) : null}
-            {serverWorkspaces.length > 0 ? (
-              <div className="mt-4 rounded-md border border-zinc-200 bg-zinc-50 p-3">
-                <h3 className="text-sm font-semibold text-zinc-900">Saved workspaces</h3>
-                <ul className="mt-2 space-y-2 text-sm text-zinc-600">
-                  {serverWorkspaces.slice(0, 5).map((workspace) => (
-                    <li key={workspace.id ?? `${workspace.title ?? "workspace"}-${workspace.updatedAt ?? "unknown"}`} className="rounded-md border border-zinc-200 bg-white p-2">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (workspace.id) {
-                            void loadWorkspaceById(workspace.id);
-                          }
-                        }}
-                        className="w-full text-left"
-                      >
-                        <div className="font-medium text-zinc-800">{workspace.title ?? "Untitled workspace"}</div>
-                        <div className="mt-1 flex items-center gap-2 text-xs">
-                          <span className="rounded-full bg-zinc-100 px-2 py-1 uppercase tracking-[0.12em] text-zinc-700">
-                            {workspace.status ?? "draft"}
-                          </span>
-                          {workspace.updatedAt ? <span>{new Date(workspace.updatedAt).toLocaleString()}</span> : null}
-                        </div>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ) : null}
-            <div className="mt-4 grid gap-2">
-              <button
-                onClick={() => {
-                  void saveWorkspaceToServer("draft");
-                }}
-                className="rounded-md border border-zinc-300 px-3 py-2 text-sm font-semibold"
-              >
-                Save draft to server
-              </button>
-              <button
-                onClick={() => {
-                  void loadWorkspaceFromServer("draft");
-                }}
-                className="rounded-md border border-zinc-300 px-3 py-2 text-sm font-semibold"
-              >
-                Load latest draft
-              </button>
-              <button
-                onClick={() => {
-                  void loadWorkspaceFromServer("published");
-                }}
-                className="rounded-md border border-zinc-300 px-3 py-2 text-sm font-semibold"
-              >
-                Load latest published
-              </button>
-              <button
-                onClick={exportWorkspaceJson}
-                className="rounded-md border border-zinc-300 px-3 py-2 text-sm font-semibold"
-              >
-                Export workspace JSON
-              </button>
-              <button
-                onClick={resetWorkspace}
-                className="rounded-md border border-rose-200 px-3 py-2 text-sm font-semibold text-rose-700"
-              >
-                Reset workspace
-              </button>
-            </div>
-          </section>
-
-          <section className="border border-zinc-200 bg-white p-4">
-            <h2 className="text-lg font-semibold">8. Scraper Health</h2>
-            <p className="mt-1 text-sm text-zinc-600">
-              Monitor the server-side ingest loop, latest snapshot, and scheduler state.
-            </p>
-            <div className="mt-4 flex items-center gap-2">
-              <span
-                className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
-                  healthStatus.ok ? "bg-emerald-100 text-emerald-800" : "bg-rose-100 text-rose-800"
-                }`}
-              >
-                {healthStatus.ok ? "Online" : "Offline"}
-              </span>
-              <span className="rounded-full bg-zinc-100 px-2.5 py-1 text-xs font-semibold text-zinc-700">
-                {healthStatus.snapshotCount} snapshot items
-              </span>
-            </div>
-            <p className="mt-3 text-sm text-zinc-600">{healthMessage}</p>
-            <p className="mt-2 text-sm text-zinc-500">
-              {healthStatus.hasSnapshot && healthStatus.generatedAt
-                ? `Last snapshot: ${new Date(healthStatus.generatedAt).toLocaleString()}`
-                : "No snapshot has been written yet."}
-            </p>
-            <div className="mt-4 space-y-3">
-              <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3">
-                <h3 className="text-sm font-semibold text-zinc-900">Persisted state</h3>
-                <div className="mt-2 space-y-1 text-sm text-zinc-600">
-                  <div>Snapshots: {healthStatus.snapshotCount}</div>
-                  <div>Saved workspaces: {healthStatus.workspaceCount ?? serverWorkspaces.length}</div>
-                  <div>Latest workspace: {healthStatus.latestWorkspaceTitle ?? "None yet"}</div>
-                  {healthStatus.latestWorkspaceUpdatedAt ? (
-                    <div>Updated: {new Date(healthStatus.latestWorkspaceUpdatedAt).toLocaleString()}</div>
-                  ) : null}
-                </div>
-              </div>
-              <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3">
-                <h3 className="text-sm font-semibold text-zinc-900">ACLED auth</h3>
-                <div className="mt-2 text-sm text-zinc-600">
-                  {acledTokenStatus.ok && acledTokenStatus.token?.expires_at ? (
-                    <>
-                      <div className="font-medium text-emerald-700">Token available</div>
-                      <div>Expires: {new Date(acledTokenStatus.token.expires_at * 1000).toLocaleString()}</div>
-                    </>
-                  ) : (
-                    <div className="font-medium text-amber-700">No stored ACLED token yet</div>
-                  )}
-                </div>
-              </div>
-              {healthStatus.sourceHealth.length > 0 ? (
-                <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3">
-                  <h3 className="text-sm font-semibold text-zinc-900">Source status</h3>
-                  <ul className="mt-2 space-y-2 text-sm text-zinc-600">
-                    {healthStatus.sourceHealth.map((entry) => (
-                      <li key={entry.name} className="flex items-center justify-between gap-2">
-                        <span>{entry.name}</span>
-                        <span className={`rounded-full px-2 py-1 text-xs font-semibold ${entry.ok ? "bg-emerald-100 text-emerald-800" : "bg-rose-100 text-rose-800"}`}>
-                          {entry.ok ? `${entry.count} item${entry.count === 1 ? "" : "s"}` : "error"}
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              ) : null}
-              {healthStatus.lastErrors.length > 0 ? (
-                <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3">
-                  <h3 className="text-sm font-semibold text-zinc-900">Recent failures</h3>
-                  <ul className="mt-2 space-y-2 text-sm text-zinc-600">
-                    {healthStatus.lastErrors.map((entry, index) => (
-                      <li key={`${entry.source}-${index}`} className="border-l-2 border-rose-300 pl-2">
-                        <div className="font-medium text-zinc-800">{entry.source}</div>
-                        <div>{entry.message}</div>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              ) : null}
-              {healthStatus.scheduler ? (
-                <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3">
-                  <h3 className="text-sm font-semibold text-zinc-900">Scheduler</h3>
-                  <p className="mt-2 text-sm text-zinc-600">
-                    {healthStatus.scheduler.enabled ? "Enabled" : "Disabled"} • {healthStatus.scheduler.running ? "Running" : "Stopped"}
-                  </p>
-                  <p className="mt-1 text-sm text-zinc-600">
-                    Interval: {healthStatus.scheduler.intervalMinutes} min
-                  </p>
-                  <p className="mt-1 text-sm text-zinc-600">
-                    Next run: {healthStatus.scheduler.nextRunAt ? new Date(healthStatus.scheduler.nextRunAt).toLocaleString() : "Not scheduled"}
-                  </p>
-                </div>
-              ) : null}
-              {healthStatus.runHistory.length > 0 ? (
-                <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3">
-                  <h3 className="text-sm font-semibold text-zinc-900">Recent runs</h3>
-                  <ul className="mt-2 space-y-2 text-sm text-zinc-600">
-                    {healthStatus.runHistory.slice(0, 5).map((entry, index) => (
-                      <li key={`${entry.runAt}-${index}`} className="border-l-2 border-zinc-300 pl-2">
-                        <div className="font-medium text-zinc-800">{new Date(entry.runAt).toLocaleString()}</div>
-                        <div>{entry.count} article{entry.count === 1 ? "" : "s"}</div>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              ) : null}
-              <button
-                onClick={() => void refreshHealthStatus()}
-                className="rounded-md border border-zinc-300 px-3 py-2 text-sm font-semibold"
-              >
-                Refresh health
-              </button>
-            </div>
-          </section>
-
-          <section className="border border-zinc-200 bg-white p-4">
-            <h2 className="text-lg font-semibold">1. Report Parameters</h2>
+            <h2 className="text-lg font-semibold">1. Define report scope</h2>
             <p className="mt-1 text-sm text-zinc-600">
               Set the reporting frame before collecting or filtering articles.
             </p>
@@ -1470,6 +1322,32 @@ export default function MonitorDashboard() {
                   <option>Public Draft</option>
                 </select>
               </label>
+            </div>
+          </section>
+
+          <section className="border border-zinc-200 bg-white p-4">
+            <h3 className="text-sm font-semibold uppercase tracking-[0.14em] text-zinc-500">
+              Quick actions
+            </h3>
+            <div className="mt-3 grid gap-2">
+              <button
+                onClick={() => setActiveModal("workspace")}
+                className="rounded-md border border-zinc-300 bg-zinc-50 px-3 py-2 text-left text-sm font-semibold text-zinc-800"
+              >
+                Workspace & export
+              </button>
+              <button
+                onClick={() => setActiveModal("health")}
+                className="rounded-md border border-zinc-300 bg-zinc-50 px-3 py-2 text-left text-sm font-semibold text-zinc-800"
+              >
+                Pipeline health
+              </button>
+              <button
+                onClick={() => setActiveModal("draft")}
+                className="rounded-md border border-zinc-300 bg-zinc-50 px-3 py-2 text-left text-sm font-semibold text-zinc-800"
+              >
+                Report draft shape
+              </button>
             </div>
           </section>
 
@@ -1538,7 +1416,7 @@ export default function MonitorDashboard() {
             <div className="border border-zinc-200 bg-white p-4">
               <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                 <div>
-                  <h2 className="text-lg font-semibold">2. Source Registry</h2>
+                  <h2 className="text-lg font-semibold">2. Manage sources</h2>
                   <p className="mt-1 text-sm text-zinc-600">
                     Add, edit, enable, or remove approved collection sources.
                   </p>
@@ -1686,7 +1564,7 @@ export default function MonitorDashboard() {
           <section className="border border-zinc-200 bg-white p-4">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
               <div>
-                <h2 className="text-lg font-semibold">3. Article Ingestion Workspace</h2>
+                <h2 className="text-lg font-semibold">3. Gather evidence</h2>
                 <p className="mt-1 text-sm text-zinc-600">
                   Queue source material before extraction, deduplication, and analyst review.
                 </p>
@@ -1777,7 +1655,21 @@ export default function MonitorDashboard() {
               </button>
             </form>
 
+            <div className="mt-4 rounded-md border border-zinc-200 bg-zinc-100/70 p-3 text-sm text-zinc-600">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="font-semibold text-zinc-800">Workflow cue</span>
+                <span className="rounded-full bg-white px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.12em] text-zinc-600">
+                  {nextRecommendedAction}
+                </span>
+              </div>
+            </div>
+
             <div className="mt-4 grid gap-3">
+              {filteredArticles.length === 0 ? (
+                <div className="rounded-md border border-dashed border-zinc-300 bg-white p-4 text-sm text-zinc-600">
+                  No articles match the current filters yet. Adjust the report scope or enable more sources to see items here.
+                </div>
+              ) : null}
               {filteredArticles.map((article) => (
                 <article key={`article-${article.id}`} className="border border-zinc-200 bg-zinc-50 p-4">
                   <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
@@ -1833,7 +1725,7 @@ export default function MonitorDashboard() {
 
           <section className="grid gap-5 xl:grid-cols-[360px_1fr]">
             <div className="border border-zinc-200 bg-white p-4">
-              <h2 className="text-lg font-semibold">4. Article Processing</h2>
+              <h2 className="text-lg font-semibold">4. Process the queue</h2>
               <p className="mt-1 text-sm text-zinc-600">
                 Convert queued source material into structured report evidence.
               </p>
@@ -1899,7 +1791,7 @@ export default function MonitorDashboard() {
             </div>
 
             <div className="border border-zinc-200 bg-white p-4">
-              <h2 className="text-lg font-semibold">5. Analyst Review</h2>
+              <h2 className="text-lg font-semibold">5. Review and approve</h2>
               <p className="mt-1 text-sm text-zinc-600">
                 Edit extracted language, confirm confidence, and approve only sourced claims.
               </p>
@@ -2025,7 +1917,7 @@ export default function MonitorDashboard() {
           <section className="border border-zinc-200 bg-white p-4">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
               <div>
-                <h2 className="text-lg font-semibold">6. Report Generator</h2>
+                <h2 className="text-lg font-semibold">6. Generate report</h2>
                 <p className="mt-1 text-sm text-zinc-600">
                   Approved evidence is assembled into the weekly situation update structure.
                 </p>
@@ -2132,8 +2024,272 @@ export default function MonitorDashboard() {
               )}
             </div>
           </section>
+
+          <section className="border border-zinc-200 bg-white p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-semibold">Report draft shape</h2>
+                <p className="mt-1 text-sm text-zinc-600">
+                  A compact view of the outline and scope that will appear in the final report.
+                </p>
+              </div>
+              <button
+                onClick={() => setActiveModal("draft")}
+                className="rounded-md border border-zinc-300 px-3 py-2 text-sm font-semibold"
+              >
+                Open
+              </button>
+            </div>
+            <div className="mt-4 rounded-md border border-zinc-200 bg-zinc-50 p-3 text-sm">
+              <p className="font-semibold">{parameters.title.toUpperCase()}</p>
+              <p className="mt-2 text-zinc-600">
+                Reporting Period: {formatDate(parameters.startDate)} - {formatDate(parameters.endDate)}
+              </p>
+              <p className="text-zinc-600">Classification: {parameters.classification}</p>
+              <ol className="mt-4 space-y-2 text-zinc-700">
+                {reportSections.slice(0, 5).map((section, index) => (
+                  <li key={section} className="flex gap-3 border-b border-zinc-100 pb-2">
+                    <span className="w-6 shrink-0 font-semibold text-zinc-400">
+                      {String(index + 1).padStart(2, "0")}
+                    </span>
+                    <span>{section}</span>
+                  </li>
+                ))}
+              </ol>
+            </div>
+          </section>
         </div>
       </div>
+
+      {activeModal ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4 py-6">
+          <div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-xl border border-zinc-200 bg-white shadow-2xl">
+            <div className="flex items-center justify-between border-b border-zinc-200 px-5 py-4">
+              <div>
+                <h3 className="text-lg font-semibold text-zinc-900">
+                  {activeModal === "workspace"
+                    ? "Workspace & export"
+                    : activeModal === "health"
+                      ? "Pipeline health"
+                      : "Report draft shape"}
+                </h3>
+                <p className="mt-1 text-sm text-zinc-600">
+                  {activeModal === "workspace"
+                    ? "Save, load, export, or reset the current report workspace."
+                    : activeModal === "health"
+                      ? "Inspect the latest ingest health, storage state, and scheduler status."
+                      : "Review the draft report structure before exporting or publishing."}
+                </p>
+              </div>
+              <button
+                onClick={() => setActiveModal(null)}
+                className="rounded-md border border-zinc-300 px-3 py-2 text-sm font-semibold"
+              >
+                Close
+              </button>
+            </div>
+            <div className="p-5">
+              {activeModal === "workspace" ? (
+                <div className="space-y-4">
+                  <div className="rounded-md border border-zinc-200 bg-zinc-50 p-4 text-sm text-zinc-600">
+                    <div className="inline-flex rounded-full bg-zinc-100 px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.12em] text-zinc-700">
+                      Status: {workspaceStatus === "published" ? "Published" : "Draft"}
+                    </div>
+                    {workspacePublishedAt ? (
+                      <p className="mt-2 text-xs text-zinc-500">
+                        Published {new Date(workspacePublishedAt).toLocaleString()}
+                      </p>
+                    ) : null}
+                  </div>
+                  {serverWorkspaces.length > 0 ? (
+                    <div className="rounded-md border border-zinc-200 bg-zinc-50 p-4">
+                      <h4 className="text-sm font-semibold text-zinc-900">Saved workspaces</h4>
+                      <ul className="mt-2 space-y-2 text-sm text-zinc-600">
+                        {serverWorkspaces.slice(0, 5).map((workspace) => (
+                          <li key={workspace.id ?? `${workspace.title ?? "workspace"}-${workspace.updatedAt ?? "unknown"}`} className="rounded-md border border-zinc-200 bg-white p-2">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (workspace.id) {
+                                  void loadWorkspaceById(workspace.id);
+                                }
+                              }}
+                              className="w-full text-left"
+                            >
+                              <div className="font-medium text-zinc-800">{workspace.title ?? "Untitled workspace"}</div>
+                              <div className="mt-1 flex items-center gap-2 text-xs">
+                                <span className="rounded-full bg-zinc-100 px-2 py-1 uppercase tracking-[0.12em] text-zinc-700">
+                                  {workspace.status ?? "draft"}
+                                </span>
+                                {workspace.updatedAt ? <span>{new Date(workspace.updatedAt).toLocaleString()}</span> : null}
+                              </div>
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <button
+                      onClick={() => {
+                        void saveWorkspaceToServer("draft");
+                        setActiveModal(null);
+                      }}
+                      className="rounded-md border border-zinc-300 px-3 py-2 text-sm font-semibold"
+                    >
+                      Save draft to server
+                    </button>
+                    <button
+                      onClick={() => {
+                        void loadWorkspaceFromServer("draft");
+                        setActiveModal(null);
+                      }}
+                      className="rounded-md border border-zinc-300 px-3 py-2 text-sm font-semibold"
+                    >
+                      Load latest draft
+                    </button>
+                    <button
+                      onClick={() => {
+                        void loadWorkspaceFromServer("published");
+                        setActiveModal(null);
+                      }}
+                      className="rounded-md border border-zinc-300 px-3 py-2 text-sm font-semibold"
+                    >
+                      Load latest published
+                    </button>
+                    <button
+                      onClick={() => {
+                        exportWorkspaceJson();
+                        setActiveModal(null);
+                      }}
+                      className="rounded-md border border-zinc-300 px-3 py-2 text-sm font-semibold"
+                    >
+                      Export workspace JSON
+                    </button>
+                    <button
+                      onClick={() => {
+                        resetWorkspace();
+                        setActiveModal(null);
+                      }}
+                      className="rounded-md border border-rose-200 px-3 py-2 text-sm font-semibold text-rose-700"
+                    >
+                      Reset workspace
+                    </button>
+                  </div>
+                </div>
+              ) : activeModal === "health" ? (
+                <div className="space-y-4">
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
+                        healthStatus.ok ? "bg-emerald-100 text-emerald-800" : "bg-rose-100 text-rose-800"
+                      }`}
+                    >
+                      {healthStatus.ok ? "Online" : "Offline"}
+                    </span>
+                    <span className="rounded-full bg-zinc-100 px-2.5 py-1 text-xs font-semibold text-zinc-700">
+                      {healthStatus.snapshotCount} snapshot items
+                    </span>
+                  </div>
+                  <p className="text-sm text-zinc-600">{healthMessage}</p>
+                  <div className="rounded-md border border-zinc-200 bg-zinc-50 p-4">
+                    <h4 className="text-sm font-semibold text-zinc-900">Persisted state</h4>
+                    <div className="mt-2 space-y-1 text-sm text-zinc-600">
+                      <div>Snapshots: {healthStatus.snapshotCount}</div>
+                      <div>Saved workspaces: {healthStatus.workspaceCount ?? serverWorkspaces.length}</div>
+                      <div>Latest workspace: {healthStatus.latestWorkspaceTitle ?? "None yet"}</div>
+                      {healthStatus.latestWorkspaceUpdatedAt ? (
+                        <div>Updated: {new Date(healthStatus.latestWorkspaceUpdatedAt).toLocaleString()}</div>
+                      ) : null}
+                    </div>
+                  </div>
+                  <div className="rounded-md border border-zinc-200 bg-zinc-50 p-4">
+                    <h4 className="text-sm font-semibold text-zinc-900">ACLED auth</h4>
+                    <div className="mt-2 text-sm text-zinc-600">
+                      {acledTokenStatus.ok && acledTokenStatus.token?.expires_at ? (
+                        <>
+                          <div className="font-medium text-emerald-700">Token available</div>
+                          <div>Expires: {new Date(acledTokenStatus.token.expires_at * 1000).toLocaleString()}</div>
+                        </>
+                      ) : (
+                        <div className="font-medium text-amber-700">No stored ACLED token yet</div>
+                      )}
+                    </div>
+                  </div>
+                  {healthStatus.sourceHealth.length > 0 ? (
+                    <div className="rounded-md border border-zinc-200 bg-zinc-50 p-4">
+                      <h4 className="text-sm font-semibold text-zinc-900">Source status</h4>
+                      <ul className="mt-2 space-y-2 text-sm text-zinc-600">
+                        {healthStatus.sourceHealth.map((entry) => (
+                          <li key={entry.name} className="flex items-center justify-between gap-2">
+                            <span>{entry.name}</span>
+                            <span className={`rounded-full px-2 py-1 text-xs font-semibold ${entry.ok ? "bg-emerald-100 text-emerald-800" : "bg-rose-100 text-rose-800"}`}>
+                              {entry.ok ? `${entry.count} item${entry.count === 1 ? "" : "s"}` : "error"}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
+                  {healthStatus.lastErrors.length > 0 ? (
+                    <div className="rounded-md border border-zinc-200 bg-zinc-50 p-4">
+                      <h4 className="text-sm font-semibold text-zinc-900">Recent failures</h4>
+                      <ul className="mt-2 space-y-2 text-sm text-zinc-600">
+                        {healthStatus.lastErrors.map((entry, index) => (
+                          <li key={`${entry.source}-${index}`} className="border-l-2 border-rose-300 pl-2">
+                            <div className="font-medium text-zinc-800">{entry.source}</div>
+                            <div>{entry.message}</div>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
+                  {healthStatus.scheduler ? (
+                    <div className="rounded-md border border-zinc-200 bg-zinc-50 p-4">
+                      <h4 className="text-sm font-semibold text-zinc-900">Scheduler</h4>
+                      <p className="mt-2 text-sm text-zinc-600">
+                        {healthStatus.scheduler.enabled ? "Enabled" : "Disabled"} • {healthStatus.scheduler.running ? "Running" : "Stopped"}
+                      </p>
+                      <p className="mt-1 text-sm text-zinc-600">
+                        Interval: {healthStatus.scheduler.intervalMinutes} min
+                      </p>
+                      <p className="mt-1 text-sm text-zinc-600">
+                        Next run: {healthStatus.scheduler.nextRunAt ? new Date(healthStatus.scheduler.nextRunAt).toLocaleString() : "Not scheduled"}
+                      </p>
+                    </div>
+                  ) : null}
+                  <button
+                    onClick={() => void refreshHealthStatus()}
+                    className="rounded-md border border-zinc-300 px-3 py-2 text-sm font-semibold"
+                  >
+                    Refresh health
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <div className="rounded-md border border-zinc-200 bg-zinc-50 p-4 text-sm">
+                    <p className="font-semibold">{parameters.title.toUpperCase()}</p>
+                    <p className="mt-2 text-zinc-600">
+                      Reporting Period: {formatDate(parameters.startDate)} - {formatDate(parameters.endDate)}
+                    </p>
+                    <p className="text-zinc-600">Classification: {parameters.classification}</p>
+                  </div>
+                  <ol className="space-y-2 text-sm text-zinc-700">
+                    {reportSections.map((section, index) => (
+                      <li key={section} className="flex gap-3 border-b border-zinc-100 pb-2">
+                        <span className="w-6 shrink-0 font-semibold text-zinc-400">
+                          {String(index + 1).padStart(2, "0")}
+                        </span>
+                        <span>{section}</span>
+                      </li>
+                    ))}
+                  </ol>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
     </main>
   );
 }
