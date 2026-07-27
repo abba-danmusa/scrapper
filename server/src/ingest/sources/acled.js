@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-require-imports */
 const { fetchAcledResource } = require('./acled-oauth');
 
 async function searchAcled({ startDate, endDate, regions = [], subjects = [] } = {}) {

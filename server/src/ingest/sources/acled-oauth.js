@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-require-imports */
 const https = require('https');
 const querystring = require('querystring');
 const { loadTokenState, saveTokenState } = require('./acled-token-store');
@@ -125,7 +126,7 @@ async function getValidToken() {
   return storeTokenState(tokenResponse);
 }
 
-function storeTokenState(response) {
+function persistTokenResponse(response) {
   const expiresAt = Date.now() + (response.expires_in || 86400) * 1000;
   const tokenState = {
     access_token: response.access_token,
@@ -135,7 +136,11 @@ function storeTokenState(response) {
     expires_at: expiresAt,
   };
   saveTokenState(tokenState);
-  return tokenState.access_token;
+  return tokenState;
+}
+
+function storeTokenState(response) {
+  return persistTokenResponse(response).access_token;
 }
 
 async function fetchAcledResource(params) {
@@ -151,4 +156,5 @@ module.exports = {
   refreshAccessToken,
   fetchAcledResource,
   getValidToken,
+  persistTokenResponse,
 };

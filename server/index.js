@@ -1,6 +1,9 @@
+/* eslint-disable @typescript-eslint/no-require-imports */
 const express = require('express');
 const { ingestPipeline } = require('./src/ingest/pipeline');
 const { requestAccessToken, refreshAccessToken, getCurrentTokenState } = require('./src/ingest/sources/acled-auth');
+const { persistTokenResponse } = require('./src/ingest/sources/acled-oauth');
+const { readWorkspaces, saveWorkspace, getWorkspaceById } = require('./src/ingest/store');
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -19,7 +22,14 @@ app.use((req, res, next) => {
 });
 
 app.get('/health', (_req, res) => {
-  res.json({ ok: true, service: 'scraper-server' });
+  const { getHealthSummary } = require('./src/ingest/store');
+  const { getSchedulerStatus } = require('./scheduler');
+  res.json({
+    ok: true,
+    service: 'scraper-server',
+    ...getHealthSummary(),
+    scheduler: getSchedulerStatus()
+  });
 });
 
 app.post('/acled/login', async (req, res) => {
@@ -30,7 +40,8 @@ app.post('/acled/login', async (req, res) => {
     }
 
     const response = await requestAccessToken(username, password);
-    res.json({ ok: true, token: response });
+    const persisted = persistTokenResponse(response);
+    res.json({ ok: true, token: persisted });
   } catch (error) {
     res.status(400).json({ ok: false, error: error instanceof Error ? error.message : 'Login failed' });
   }
@@ -72,6 +83,34 @@ app.post('/ingest', async (req, res) => {
       ok: false,
       error: error instanceof Error ? error.message : 'Unknown ingestion error'
     });
+  }
+});
+
+app.get('/workspaces', (req, res) => {
+  const requestedStatus = typeof req.query.status === 'string' ? req.query.status.toLowerCase() : null;
+  const workspaces = readWorkspaces();
+  const filtered = requestedStatus
+    ? workspaces.filter((workspace) => (workspace.status || 'draft') === requestedStatus)
+    : workspaces;
+
+  res.json({ ok: true, workspaces: filtered });
+});
+
+app.get('/workspaces/:workspaceId', (req, res) => {
+  const workspace = getWorkspaceById(req.params.workspaceId);
+  if (!workspace) {
+    return res.status(404).json({ ok: false, error: 'Workspace not found' });
+  }
+
+  return res.json({ ok: true, workspace });
+});
+
+app.post('/workspaces', (req, res) => {
+  try {
+    const saved = saveWorkspace(req.body || {});
+    res.json({ ok: true, workspace: saved });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error instanceof Error ? error.message : 'Unable to save workspace' });
   }
 });
 

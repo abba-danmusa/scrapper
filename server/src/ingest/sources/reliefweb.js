@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-require-imports */
 const https = require('https');
 
 function fetchJson(url, body) {
@@ -39,7 +40,7 @@ async function searchReliefWeb({ startDate, endDate, subjects = [], regions = []
     'Nigeria',
     ...regions.filter((region) => region !== 'National Overview'),
     ...subjects
-  ];
+  ].filter(Boolean);
 
   const payload = {
     appname: 'northern-nigeria-situation-monitor',
@@ -48,7 +49,7 @@ async function searchReliefWeb({ startDate, endDate, subjects = [], regions = []
     profile: 'list',
     query: {
       value: searchTerms.join(' '),
-      operator: 'AND'
+      operator: 'OR'
     },
     filter: {
       operator: 'AND',

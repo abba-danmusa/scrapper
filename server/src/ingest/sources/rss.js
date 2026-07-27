@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-require-imports */
 const Parser = require('rss-parser');
 
 async function searchRss({ subjects = [], regions = [] }) {
@@ -28,7 +29,30 @@ async function searchRss({ subjects = [], regions = [] }) {
 
   for (const feedSource of feedSources) {
     try {
-      const feed = await parser.parseURL(feedSource.url);
+      // Use retry/backoff helper for more resilient fetches
+      async function fetchFeedWithRetries(parserInstance, url, attempts = 3) {
+        let lastErr = null;
+        for (let i = 0; i < attempts; i++) {
+          try {
+            if (i > 0) console.warn(`Retrying RSS fetch (${i + 1}/${attempts}) for ${url}`);
+            return await parserInstance.parseURL(url);
+          } catch (err) {
+            lastErr = err;
+            const wait = Math.min(2000, 200 * Math.pow(2, i));
+            // If it's a 401/403, don't keep retrying repeatedly
+            const msg = err && err.message ? err.message.toLowerCase() : '';
+            if (msg.includes('401') || msg.includes('403')) {
+              console.warn(`RSS fetch permission error for ${url}: ${err.message}`);
+              break;
+            }
+            await new Promise((r) => setTimeout(r, wait));
+          }
+        }
+        throw lastErr;
+      }
+
+      const feed = await fetchFeedWithRetries(parser, feedSource.url, 3);
+
       const items = (feed.items || []).map((item) => {
         const text = `${item.title || ''} ${item.contentSnippet || ''} ${item.content || ''}`;
         const region = pickRegion(text, regions);

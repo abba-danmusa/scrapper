@@ -1,0 +1,199 @@
+[
+  {
+    "id": "test-save-1",
+    "title": "Smoke Test Workspace",
+    "status": "draft",
+    "parameters": {
+      "title": "Smoke Test",
+      "startDate": "2026-06-01",
+      "endDate": "2026-06-18",
+      "classification": "Public Draft",
+      "subjects": [
+        "Security"
+      ],
+      "regions": [
+        "NE Region"
+      ]
+    },
+    "sources": [
+      {
+        "id": 1,
+        "name": "ReliefWeb",
+        "type": "API",
+        "coverage": "Humanitarian",
+        "priority": "Core",
+        "enabled": true,
+        "backendSupported": true
+      }
+    ],
+    "articles": [
+      {
+        "id": 9001,
+        "title": "Saved approved",
+        "source": "ReliefWeb",
+        "url": "https://example.org/saved",
+        "date": "2026-07-26",
+        "region": "NE Region",
+        "subject": "Security",
+        "confidence": "High",
+        "status": "Approved",
+        "extractedSummary": "Saved approved summary",
+        "reportSection": "Context Overview",
+        "processedAt": "2026-07-26"
+      }
+    ],
+    "updatedAt": "2026-07-26T20:27:13.202Z",
+    "publishedAt": null
+  },
+  {
+    "id": "health-summary-123",
+    "title": "Health summary report",
+    "status": "draft",
+    "parameters": {
+      "title": "Health summary report",
+      "startDate": "2026-06-01",
+      "endDate": "2026-06-18",
+      "classification": "Public Draft",
+      "subjects": [
+        "Security"
+      ],
+      "regions": [
+        "NE Region"
+      ]
+    },
+    "sources": [],
+    "articles": [],
+    "updatedAt": "2026-07-26T15:22:47.791Z",
+    "publishedAt": null
+  },
+  {
+    "id": "workspace-1785001566116",
+    "parameters": {
+      "title": "Weekly Situation Update - Northern Nigeria",
+      "startDate": "2026-05-01",
+      "endDate": "2026-07-25",
+      "classification": "Internal - Not for Publication",
+      "subjects": [
+        "Economy",
+        "Security",
+        "Nutrition",
+        "Health",
+        "Food Security",
+        "WASH",
+        "Government Response",
+        "Humanitarian Response"
+      ],
+      "regions": [
+        "National Overview",
+        "NE Region",
+        "NW Region"
+      ]
+    },
+    "sources": [
+      {
+        "id": 2,
+        "name": "ACLED",
+        "type": "Dataset",
+        "coverage": "Conflict events, actors, fatalities, locations",
+        "priority": "Core",
+        "enabled": true,
+        "backendSupported": true
+      },
+      {
+        "id": 3,
+        "name": "OCHA",
+        "type": "Official",
+        "coverage": "Coordination updates and access constraints",
+        "priority": "Core",
+        "enabled": true
+      },
+      {
+        "id": 4,
+        "name": "UNICEF",
+        "type": "Official",
+        "coverage": "Health, nutrition, WASH, children, education",
+        "priority": "Core",
+        "enabled": true
+      },
+      {
+        "id": 5,
+        "name": "WHO",
+        "type": "Official",
+        "coverage": "Disease outbreaks and health response",
+        "priority": "Useful",
+        "enabled": true
+      },
+      {
+        "id": 6,
+        "name": "UNHCR",
+        "type": "Official",
+        "coverage": "Displacement, shelter, protection",
+        "priority": "Useful",
+        "enabled": true
+      },
+      {
+        "id": 7,
+        "name": "Daily Trust",
+        "type": "News",
+        "coverage": "Northern Nigeria local reporting",
+        "priority": "Core",
+        "enabled": true
+      },
+      {
+        "id": 8,
+        "name": "HumAngle",
+        "type": "News",
+        "coverage": "Conflict, humanitarian, and accountability reporting",
+        "priority": "Specialist",
+        "enabled": true
+      }
+    ],
+    "articles": [],
+    "status": "draft",
+    "publishedAt": null,
+    "title": "Weekly Situation Update - Northern Nigeria",
+    "updatedAt": "2026-07-26T15:42:37.899Z"
+  },
+  {
+    "id": "published-456",
+    "title": "Published report",
+    "status": "published",
+    "parameters": {
+      "title": "Published report",
+      "startDate": "2026-06-01",
+      "endDate": "2026-06-18",
+      "classification": "Public Draft",
+      "subjects": [
+        "Security"
+      ],
+      "regions": [
+        "NE Region"
+      ]
+    },
+    "sources": [],
+    "articles": [],
+    "updatedAt": "2026-07-26T15:22:47.792Z",
+    "publishedAt": "2026-07-26T15:22:47.792Z"
+  },
+  {
+    "id": "draft-123",
+    "title": "Draft report",
+    "status": "draft",
+    "parameters": {
+      "title": "Draft report",
+      "startDate": "2026-06-01",
+      "endDate": "2026-06-18",
+      "classification": "Public Draft",
+      "subjects": [
+        "Security"
+      ],
+      "regions": [
+        "NE Region"
+      ]
+    },
+    "sources": [],
+    "articles": [],
+    "updatedAt": "2026-07-26T15:22:47.792Z",
+    "publishedAt": null
+  }
+]

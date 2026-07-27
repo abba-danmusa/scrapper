@@ -92,7 +92,7 @@ export async function POST(request: Request) {
         profile: "list",
         query: {
           value: searchTerms.join(" "),
-          operator: "AND",
+          operator: "OR",
         },
         filter: {
           operator: "AND",

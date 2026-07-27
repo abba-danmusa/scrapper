@@ -31,6 +31,7 @@ type Source = {
   coverage: string;
   priority: Priority;
   enabled: boolean;
+  backendSupported?: boolean;
 };
 
 type Article = {
@@ -50,13 +51,83 @@ type Article = {
   reviewerNote?: string;
 };
 
+type WorkspaceStatus = "draft" | "published";
+
 type WorkspaceState = {
+  status?: WorkspaceStatus;
+  publishedAt?: string | null;
   parameters: ReportParameters;
   sources: Source[];
   articles: Article[];
 };
 
-type IngestedArticle = Pick<Article, "title" | "source" | "url" | "date" | "region" | "subject">;
+type SourceHealthEntry = {
+  name: string;
+  ok: boolean;
+  count: number;
+  error: string | null;
+  checkedAt: string | null;
+};
+
+type RunHistoryEntry = {
+  runAt: string;
+  count: number;
+  sourceHealth: SourceHealthEntry[];
+  lastErrors: Array<{ source: string; message: string }>;
+};
+
+type HealthStatus = {
+  ok: boolean;
+  service: string;
+  snapshotCount: number;
+  generatedAt: string | null;
+  hasSnapshot: boolean;
+  sourceHealth: SourceHealthEntry[];
+  lastErrors: Array<{ source: string; message: string }>;
+  lastRunAt: string | null;
+  runHistory: RunHistoryEntry[];
+  workspaceCount?: number;
+  latestWorkspaceTitle?: string | null;
+  latestWorkspaceStatus?: WorkspaceStatus | null;
+  latestWorkspaceUpdatedAt?: string | null;
+  scheduler?: {
+    enabled: boolean;
+    running: boolean;
+    intervalMinutes: number;
+    lastRunAt: string | null;
+    nextRunAt: string | null;
+    lastError: string | null;
+  };
+};
+
+type WorkspaceSummary = {
+  id?: string;
+  title?: string;
+  status?: WorkspaceStatus;
+  publishedAt?: string | null;
+  updatedAt?: string | null;
+  parameters?: ReportParameters;
+  sources?: Source[];
+  articles?: Article[];
+};
+
+type AcledTokenStatus = {
+  ok: boolean;
+  token?: {
+    access_token?: string;
+    refresh_token?: string;
+    expires_in?: number;
+    expires_at?: number;
+    token_type?: string;
+  } | null;
+  error?: string | null;
+};
+
+type IngestedArticle = Pick<Article, "title" | "source" | "url" | "date" | "region" | "subject"> & {
+  summary?: string;
+  extractedFacts?: string[];
+  confidence?: Confidence;
+};
 
 const allSubjects = [
   "Economy",
@@ -105,7 +176,7 @@ const initialParameters: ReportParameters = {
   regions: ["National Overview", "NE Region", "NW Region"],
 };
 
-const initialSources: Source[] = [
+const supportedBackendSources: Source[] = [
   {
     id: 1,
     name: "ReliefWeb",
@@ -113,64 +184,38 @@ const initialSources: Source[] = [
     coverage: "Humanitarian reports, UN and NGO updates",
     priority: "Core",
     enabled: true,
+    backendSupported: true,
   },
   {
     id: 2,
+    name: "RSS",
+    type: "RSS",
+    coverage: "RSS feeds and vetted news sources",
+    priority: "Core",
+    enabled: true,
+    backendSupported: true,
+  },
+  {
+    id: 3,
+    name: "HTML",
+    type: "News",
+    coverage: "HTML-based site discovery and article extraction",
+    priority: "Core",
+    enabled: true,
+    backendSupported: true,
+  },
+  {
+    id: 4,
     name: "ACLED",
     type: "Dataset",
     coverage: "Conflict events, actors, fatalities, locations",
     priority: "Core",
     enabled: true,
-  },
-  {
-    id: 3,
-    name: "OCHA",
-    type: "Official",
-    coverage: "Coordination updates and access constraints",
-    priority: "Core",
-    enabled: true,
-  },
-  {
-    id: 4,
-    name: "UNICEF",
-    type: "Official",
-    coverage: "Health, nutrition, WASH, children, education",
-    priority: "Core",
-    enabled: true,
-  },
-  {
-    id: 5,
-    name: "WHO",
-    type: "Official",
-    coverage: "Disease outbreaks and health response",
-    priority: "Useful",
-    enabled: true,
-  },
-  {
-    id: 6,
-    name: "UNHCR",
-    type: "Official",
-    coverage: "Displacement, shelter, protection",
-    priority: "Useful",
-    enabled: true,
-  },
-  {
-    id: 7,
-    name: "Daily Trust",
-    type: "News",
-    coverage: "Northern Nigeria local reporting",
-    priority: "Core",
-    enabled: true,
-  },
-  {
-    id: 8,
-    name: "HumAngle",
-    type: "News",
-    coverage: "Conflict, humanitarian, and accountability reporting",
-    priority: "Specialist",
-    enabled: true,
+    backendSupported: true,
   },
 ];
+
+const initialSources: Source[] = supportedBackendSources.map((source) => ({ ...source }));
 
 const initialArticles: Article[] = [];
 
@@ -266,6 +311,28 @@ function createSafeFilename(value: string) {
     .slice(0, 80);
 }
 
+function toggleListValue(values: string[], value: string) {
+  return values.includes(value) ? values.filter((item) => item !== value) : [...values, value];
+}
+
+function getReportSection(subject: string): ReportSection {
+  const normalizedSubject = subject.toLowerCase();
+
+  if (normalizedSubject.includes("access") || normalizedSubject.includes("constraint")) {
+    return "Access Constraints";
+  }
+
+  if (normalizedSubject.includes("response") || normalizedSubject.includes("government")) {
+    return "Government and Humanitarian Response";
+  }
+
+  if (normalizedSubject.includes("nutrition") || normalizedSubject.includes("health")) {
+    return "Multisectoral Analysis";
+  }
+
+  return "Context Overview";
+}
+
 function escapeHtml(value: string) {
   return value
     .replace(/&/g, "&amp;")
@@ -286,6 +353,87 @@ function downloadFile(filename: string, content: string, type: string) {
   URL.revokeObjectURL(url);
 }
 
+function formatIngestResultMessage(
+  payload: {
+    count?: number;
+    sourceHealth?: SourceHealthEntry[];
+    lastErrors?: Array<{ source: string; message: string }>;
+  },
+  incomingArticles: IngestedArticle[],
+  newArticleCount = incomingArticles.length,
+  duplicateCount = 0,
+) {
+  const count = payload.count ?? incomingArticles.length;
+  const actualNewCount = newArticleCount ?? Math.max(0, count);
+  const duplicatesSkipped = duplicateCount ?? Math.max(0, count - actualNewCount);
+  const errorCount = payload.lastErrors?.length ?? 0;
+
+  if (actualNewCount > 0) {
+    return `${actualNewCount} new, ${duplicatesSkipped} duplicate${duplicatesSkipped === 1 ? "" : "s"}, ${errorCount} error${errorCount === 1 ? "" : "s"}. ${actualNewCount === 1 ? "Article" : "Articles"} added to the workspace.`;
+  }
+
+  if (payload.lastErrors && payload.lastErrors.length > 0) {
+    const failureSummary = payload.lastErrors
+      .slice(0, 3)
+      .map((entry) => `${entry.source}: ${entry.message}`)
+      .join(" • ");
+
+    return `${actualNewCount} new, ${duplicatesSkipped} duplicate${duplicatesSkipped === 1 ? "" : "s"}, ${errorCount} error${errorCount === 1 ? "" : "s"}. ${payload.lastErrors.length === 1 ? "Source issue" : "Source issues"}: ${failureSummary}`;
+  }
+
+  if (payload.sourceHealth && payload.sourceHealth.some((entry) => !entry.ok)) {
+    return `${actualNewCount} new, ${duplicatesSkipped} duplicate${duplicatesSkipped === 1 ? "" : "s"}, ${errorCount} error${errorCount === 1 ? "" : "s"}. One or more sources reported errors.`;
+  }
+
+  if (count > 0) {
+    return `${actualNewCount} new, ${duplicatesSkipped} duplicate${duplicatesSkipped === 1 ? "" : "s"}, ${errorCount} error${errorCount === 1 ? "" : "s"}. No new items were added to the workspace.`;
+  }
+
+  return "0 new, 0 duplicates, 0 errors. No new articles were returned by the ingestion pipeline.";
+}
+
+function hydrateStoredSource(source: Partial<Source>): Source {
+  const backendSupported =
+    typeof source.backendSupported === "boolean"
+      ? source.backendSupported
+      : supportedBackendSources.some((item) => item.name === source.name);
+
+  return {
+    id: typeof source.id === "number" ? source.id : 0,
+    name: source.name ?? "Unknown Source",
+    type: source.type ?? "News",
+    coverage: source.coverage ?? "",
+    priority: source.priority ?? "Useful",
+    enabled: typeof source.enabled === "boolean" ? source.enabled : true,
+    backendSupported,
+  };
+}
+
+function hydrateWorkspaceSources(rawSources: unknown): Source[] {
+  const persistedSources = Array.isArray(rawSources)
+    ? (rawSources as Array<Partial<Source>>).map((source) => hydrateStoredSource(source))
+    : [];
+
+  const mergedSources = [...persistedSources];
+  supportedBackendSources.forEach((backendSource) => {
+    const existingIndex = mergedSources.findIndex((item) => item.name === backendSource.name);
+    if (existingIndex === -1) {
+      mergedSources.push({
+        ...backendSource,
+        enabled: backendSource.enabled,
+      });
+    } else {
+      mergedSources[existingIndex] = {
+        ...backendSource,
+        ...mergedSources[existingIndex],
+        enabled: mergedSources[existingIndex].enabled,
+      };
+    }
+  });
+
+  return mergedSources;
+}
+
 function readStoredWorkspace() {
   if (typeof window === "undefined") {
     return null;
@@ -298,7 +446,14 @@ function readStoredWorkspace() {
   }
 
   try {
-    return JSON.parse(savedWorkspace) as WorkspaceState;
+    const raw = JSON.parse(savedWorkspace) as WorkspaceState;
+
+    return {
+      ...raw,
+      sources: hydrateWorkspaceSources(raw.sources),
+      parameters: raw.parameters ?? initialParameters,
+      articles: Array.isArray(raw.articles) ? raw.articles : initialArticles,
+    };
   } catch {
     localStorage.removeItem(workspaceStorageKey);
     return null;
@@ -336,48 +491,160 @@ function StatusBadge({ status }: { status: IngestionStatus }) {
 }
 
 export default function MonitorDashboard() {
-  const [parameters, setParameters] = useState(initialParameters);
-  const [sources, setSources] = useState(initialSources);
-  const [articles, setArticles] = useState(initialArticles);
+  const initialWorkspace = useMemo(() => readStoredWorkspace(), []);
+
+  const mergedSources = useMemo(() => {
+    const stored = Array.isArray(initialWorkspace?.sources) ? (initialWorkspace?.sources as Source[]) : [];
+    const storedByName = new Map(stored.map((s) => [s.name, s]));
+
+    // Merge default supported backend sources with any stored overrides
+    const mergedDefaults = initialSources.map((def) => {
+      const storedEntry = storedByName.get(def.name);
+      if (storedEntry) {
+        return {
+          ...def,
+          ...storedEntry,
+          // ensure known defaults are always marked backendSupported
+          backendSupported: true,
+        } as Source;
+      }
+
+      return { ...def } as Source;
+    });
+
+    // Append any additional stored sources that are not part of the defaults
+    const extras = stored
+      .filter((s) => !initialSources.some((d) => d.name === s.name))
+      .map((s) => ({ ...s, backendSupported: s.backendSupported ?? false }));
+
+    return [...mergedDefaults, ...extras];
+  }, [initialWorkspace]);
+
+  const initialSourcesState = mergedSources.length > 0 ? mergedSources : initialSources;
+
+  const [parameters, setParameters] = useState<ReportParameters>(initialWorkspace?.parameters ?? initialParameters);
+  const [sources, setSources] = useState<Source[]>(initialSourcesState);
+  const [articles, setArticles] = useState<Article[]>(initialWorkspace?.articles ?? initialArticles);
+  const [restoredWorkspaceNotice, setRestoredWorkspaceNotice] = useState<string | null>(
+    initialWorkspace ? `Restored workspace: ${initialWorkspace.parameters?.title ?? "Saved workspace"}` : null,
+  );
   const [sourceForm, setSourceForm] = useState(emptySourceForm);
   const [editingSourceId, setEditingSourceId] = useState<number | null>(null);
   const [articleForm, setArticleForm] = useState(emptyArticleForm);
-  const [isHydrated, setIsHydrated] = useState(false);
   const [ingestionMessage, setIngestionMessage] = useState("Ready to ingest source material.");
+  const [workspaceId, setWorkspaceId] = useState<string | null>(null);
+  const [workspaceStatus, setWorkspaceStatus] = useState<WorkspaceStatus>(
+    (initialWorkspace?.status as WorkspaceStatus | undefined) ?? "draft",
+  );
+  const [workspacePublishedAt, setWorkspacePublishedAt] = useState<string | null>(initialWorkspace?.publishedAt ?? null);
   const [isIngesting, setIsIngesting] = useState(false);
+  const [healthStatus, setHealthStatus] = useState<HealthStatus>({
+    ok: false,
+    service: "scraper-server",
+    snapshotCount: 0,
+    generatedAt: null,
+    hasSnapshot: false,
+    sourceHealth: [],
+    lastErrors: [],
+    lastRunAt: null,
+    runHistory: [],
+  });
+  const [healthMessage, setHealthMessage] = useState("Checking scraper health...");
+  const [serverWorkspaces, setServerWorkspaces] = useState<WorkspaceSummary[]>([]);
+  const [acledTokenStatus, setAcledTokenStatus] = useState<AcledTokenStatus>({ ok: false, token: null });
 
   useEffect(() => {
-    const savedWorkspace = localStorage.getItem(workspaceStorageKey);
-
-    if (savedWorkspace) {
-      try {
-        const parsedWorkspace = JSON.parse(savedWorkspace) as WorkspaceState;
-        setParameters(parsedWorkspace.parameters ?? initialParameters);
-        setSources(parsedWorkspace.sources ?? initialSources);
-        setArticles(parsedWorkspace.articles ?? initialArticles);
-      } catch {
-        localStorage.removeItem(workspaceStorageKey);
-      }
+    if (initialWorkspace) {
+      const timer = window.setTimeout(() => setRestoredWorkspaceNotice(null), 6000);
+      return () => window.clearTimeout(timer);
     }
+    return undefined;
+  }, [initialWorkspace]);
 
-    setIsHydrated(true);
+  async function refreshHealthStatus() {
+    try {
+      const response = await fetch(`${scraperApiBaseUrl}/health`);
+      const payload = (await response.json()) as Partial<HealthStatus> & { ok?: boolean };
+
+      setHealthStatus({
+        ok: response.ok && payload.ok === true,
+        service: payload.service ?? "scraper-server",
+        snapshotCount: typeof payload.snapshotCount === "number" ? payload.snapshotCount : 0,
+        generatedAt: payload.generatedAt ?? null,
+        hasSnapshot: payload.hasSnapshot === true,
+        sourceHealth: Array.isArray(payload.sourceHealth) ? payload.sourceHealth : [],
+        lastErrors: Array.isArray(payload.lastErrors) ? payload.lastErrors : [],
+        lastRunAt: payload.lastRunAt ?? null,
+        runHistory: Array.isArray(payload.runHistory) ? payload.runHistory : [],
+        workspaceCount: typeof payload.workspaceCount === "number" ? payload.workspaceCount : undefined,
+        latestWorkspaceTitle: payload.latestWorkspaceTitle ?? null,
+        latestWorkspaceStatus: (payload.latestWorkspaceStatus as WorkspaceStatus | null | undefined) ?? null,
+        latestWorkspaceUpdatedAt: payload.latestWorkspaceUpdatedAt ?? null,
+        scheduler: payload.scheduler,
+      });
+      setHealthMessage(
+        response.ok
+          ? `Connected to ${payload.service ?? "scraper-server"}.`
+          : "The scraper health endpoint returned an error.",
+      );
+    } catch {
+      setHealthStatus((current) => ({ ...current, ok: false }));
+      setHealthMessage("The scraper health endpoint is unavailable.");
+    }
+  }
+
+  async function refreshServerWorkspaces() {
+    try {
+      const response = await fetch(`${scraperApiBaseUrl}/workspaces`);
+      const payload = (await response.json()) as { workspaces?: WorkspaceSummary[]; error?: string };
+      if (!response.ok) {
+        throw new Error(payload.error ?? "Unable to load workspace list.");
+      }
+      setServerWorkspaces(Array.isArray(payload.workspaces) ? payload.workspaces : []);
+    } catch {
+      setServerWorkspaces([]);
+    }
+  }
+
+  async function refreshAcledAuthStatus() {
+    try {
+      const response = await fetch(`${scraperApiBaseUrl}/acled/token`);
+      const payload = (await response.json()) as AcledTokenStatus & { error?: string };
+      if (!response.ok) {
+        throw new Error(payload.error ?? "No ACLED token is currently available.");
+      }
+      setAcledTokenStatus({ ok: true, token: payload.token ?? null });
+    } catch {
+      setAcledTokenStatus({ ok: false, token: null });
+    }
+  }
+
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      void refreshHealthStatus();
+      void refreshServerWorkspaces();
+      void refreshAcledAuthStatus();
+    }, 0);
+
+    return () => window.clearTimeout(timeoutId);
   }, []);
 
   useEffect(() => {
-    if (!isHydrated) {
-      return;
-    }
-
     const workspace: WorkspaceState = {
+      status: workspaceStatus,
+      publishedAt: workspacePublishedAt,
       parameters,
       sources,
       articles,
     };
 
     localStorage.setItem(workspaceStorageKey, JSON.stringify(workspace));
-  }, [articles, isHydrated, parameters, sources]);
+  }, [articles, parameters, sources, workspacePublishedAt, workspaceStatus]);
 
-  const enabledSources = sources.filter((source) => source.enabled);
+  const enabledSources = useMemo(
+    () => sources.filter((source) => source.enabled),
+    [sources],
+  );
   const approvedArticles = articles.filter((article) => article.status === "Approved");
 
   const filteredArticles = useMemo(
@@ -391,8 +658,8 @@ export default function MonitorDashboard() {
     [articles, enabledSources, parameters.regions, parameters.subjects],
   );
 
-  const processingQueue = filteredArticles.filter((article) => article.status === "Queued");
-  const reviewQueue = filteredArticles.filter(
+  const processingQueue = articles.filter((article) => article.status === "Queued");
+  const reviewQueue = articles.filter(
     (article) => article.status === "Processed" || article.status === "Needs Review",
   );
 
@@ -409,13 +676,19 @@ export default function MonitorDashboard() {
     event.preventDefault();
 
     if (!sourceForm.name.trim() || !sourceForm.coverage.trim()) {
+      setIngestionMessage("Please provide a source name and coverage note before saving.");
       return;
     }
+
+    const name = sourceForm.name.trim();
+    const backendSupported = supportedBackendSources.some((source) => source.name === name);
 
     if (editingSourceId) {
       setSources((currentSources) =>
         currentSources.map((source) =>
-          source.id === editingSourceId ? { ...source, ...sourceForm } : source,
+          source.id === editingSourceId
+            ? { ...source, ...sourceForm, backendSupported: backendSupported || source.backendSupported }
+            : source,
         ),
       );
       setEditingSourceId(null);
@@ -426,6 +699,7 @@ export default function MonitorDashboard() {
           ...sourceForm,
           id: Math.max(0, ...currentSources.map((source) => source.id)) + 1,
           enabled: true,
+          backendSupported,
         },
       ]);
     }
@@ -459,6 +733,7 @@ export default function MonitorDashboard() {
     event.preventDefault();
 
     if (!articleForm.title.trim() || !articleForm.url.trim()) {
+      setIngestionMessage("Add a title and source URL before queueing an article.");
       return;
     }
 
@@ -477,27 +752,6 @@ export default function MonitorDashboard() {
       region: parameters.regions[0] ?? "NE Region",
       subject: parameters.subjects[0] ?? "Security",
     });
-  }
-
-  function simulateIngestionRun() {
-    const sourceName = enabledSources[0]?.name ?? "ReliefWeb";
-    const region = parameters.regions[0] ?? "National Overview";
-    const subject = parameters.subjects[0] ?? "Security";
-
-    setArticles((currentArticles) => [
-      {
-        id: Math.max(0, ...currentArticles.map((article) => article.id)) + 1,
-        title: `${sourceName} monitoring item for ${region}`,
-        source: sourceName,
-        url: "https://example.org/source-monitoring-item",
-        date: parameters.endDate,
-        region,
-        subject,
-        confidence: "Low",
-        status: "Queued",
-      },
-      ...currentArticles,
-    ]);
   }
 
   function processArticle(articleId: number) {
@@ -577,6 +831,9 @@ export default function MonitorDashboard() {
     setParameters(initialParameters);
     setSources(initialSources);
     setArticles(initialArticles);
+    setWorkspaceId(null);
+    setWorkspaceStatus("draft");
+    setWorkspacePublishedAt(null);
     localStorage.removeItem(workspaceStorageKey);
     setIngestionMessage("Workspace reset to the default sample data.");
   }
@@ -588,6 +845,20 @@ export default function MonitorDashboard() {
     );
 
     try {
+      const selectedSources = sources
+        .filter((source) => source.enabled && source.backendSupported)
+        .map((source) => source.name);
+      const activeSubjects = parameters.subjects.filter(Boolean);
+      const activeRegions = parameters.regions.filter(Boolean);
+
+      if (selectedSources.length === 0) {
+        throw new Error("Enable at least one backend source before running ingest.");
+      }
+
+      if (activeSubjects.length === 0 || activeRegions.length === 0) {
+        throw new Error("Select at least one subject and one region before running ingest.");
+      }
+
       const response = await fetch(`${scraperApiBaseUrl}/ingest`, {
         method: "POST",
         headers: {
@@ -596,9 +867,9 @@ export default function MonitorDashboard() {
         body: JSON.stringify({
           startDate: parameters.startDate,
           endDate: parameters.endDate,
-          subjects: parameters.subjects,
-          regions: parameters.regions,
-          enabledSources: sources.filter((source) => source.enabled).map((source) => source.name),
+          subjects: activeSubjects,
+          regions: activeRegions,
+          enabledSources: selectedSources,
         }),
       });
 
@@ -606,6 +877,8 @@ export default function MonitorDashboard() {
         articles?: IngestedArticle[];
         error?: string;
         count?: number;
+        sourceHealth?: SourceHealthEntry[];
+        lastErrors?: Array<{ source: string; message: string }>;
       };
 
       if (!response.ok) {
@@ -614,28 +887,57 @@ export default function MonitorDashboard() {
 
       const incomingArticles = payload.articles ?? [];
 
+      let newArticleCount = 0;
+      let duplicateCount = 0;
+
       setArticles((currentArticles) => {
         const existingKeys = new Set(
           currentArticles.map((article) => `${article.url}|${article.title}`),
         );
         const nextId = Math.max(0, ...currentArticles.map((article) => article.id)) + 1;
         const newArticles = incomingArticles
-          .filter((article) => !existingKeys.has(`${article.url}|${article.title}`))
-          .map((article, index): Article => ({
-            ...article,
-            id: nextId + index,
-            confidence: (article as Partial<Article>).confidence ?? "High",
-            status: "Queued",
-          }));
+          .filter((article) => {
+            const key = `${article.url}|${article.title}`;
+            const isDuplicate = existingKeys.has(key);
+            if (isDuplicate) {
+              duplicateCount += 1;
+            } else {
+              newArticleCount += 1;
+            }
+            return !isDuplicate;
+          })
+          .map((article, index): Article => {
+              const baseArticle = {
+              title: article.title,
+              source: article.source,
+              url: article.url,
+              date: article.date,
+              region: article.region,
+              subject: article.subject,
+              confidence: (article.confidence as Confidence | undefined) ?? "High",
+              status: "Processed" as IngestionStatus,
+            };
+
+            return {
+              ...baseArticle,
+              id: nextId + index,
+              confidence: baseArticle.confidence,
+              status: baseArticle.status,
+              extractedSummary: article.summary ?? createExtractedSummary(baseArticle as Article),
+              extractedFacts: article.extractedFacts ?? createExtractedFacts(baseArticle as Article),
+            };
+          });
 
         return [...newArticles, ...currentArticles];
       });
 
-      setIngestionMessage(
-        `${payload.count ?? incomingArticles.length} item${
-          (payload.count ?? incomingArticles.length) === 1 ? "" : "s"
-        } queued from the ingestion pipeline. Duplicate URLs were skipped.`,
-      );
+      setIngestionMessage(formatIngestResultMessage(payload, incomingArticles, newArticleCount, duplicateCount));
+      setHealthStatus((current) => ({
+        ...current,
+        sourceHealth: payload.sourceHealth ?? current.sourceHealth,
+        lastErrors: payload.lastErrors ?? current.lastErrors,
+      }));
+      void refreshHealthStatus();
     } catch (error) {
       setIngestionMessage(
         error instanceof Error
@@ -736,6 +1038,107 @@ export default function MonitorDashboard() {
       </html>`;
   }
 
+  async function saveWorkspaceToServer(nextStatus: WorkspaceStatus = "draft") {
+    const publishedAt = nextStatus === "published" ? (workspacePublishedAt ?? new Date().toISOString()) : null;
+
+    try {
+      const response = await fetch(`${scraperApiBaseUrl}/workspaces`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          id: workspaceId ?? `workspace-${Date.now()}`,
+          parameters,
+          sources,
+          articles,
+          status: nextStatus,
+          publishedAt,
+          title: parameters.title,
+        }),
+      });
+
+      const payload = (await response.json()) as { workspace?: { id?: string; status?: WorkspaceStatus; publishedAt?: string | null }; error?: string };
+
+      if (!response.ok) {
+        throw new Error(payload.error ?? "Unable to save workspace draft.");
+      }
+
+      if (payload.workspace?.id) {
+        setWorkspaceId(payload.workspace.id);
+      }
+
+      setWorkspaceStatus(payload.workspace?.status ?? nextStatus);
+      setWorkspacePublishedAt(payload.workspace?.publishedAt ?? publishedAt);
+      await refreshServerWorkspaces();
+      setIngestionMessage(
+        nextStatus === "published"
+          ? "Workspace published and saved to the server."
+          : "Workspace draft saved to the server.",
+      );
+    } catch (error) {
+      setIngestionMessage(error instanceof Error ? error.message : "Unable to save workspace draft.");
+    }
+  }
+
+  async function loadWorkspaceById(workspaceId: string) {
+    try {
+      const response = await fetch(`${scraperApiBaseUrl}/workspaces/${workspaceId}`);
+      const payload = (await response.json()) as { workspace?: WorkspaceSummary & { id?: string; status?: WorkspaceStatus; title?: string; publishedAt?: string | null }; error?: string };
+
+      if (!response.ok) {
+        throw new Error(payload.error ?? "Unable to load workspace.");
+      }
+
+      const nextWorkspace = payload.workspace;
+      if (!nextWorkspace) {
+        throw new Error("The selected workspace could not be loaded.");
+      }
+
+      setWorkspaceId(nextWorkspace.id ?? null);
+      setWorkspaceStatus((nextWorkspace.status as WorkspaceStatus | undefined) ?? "draft");
+      setWorkspacePublishedAt(nextWorkspace.publishedAt ?? null);
+      setParameters(nextWorkspace.parameters ?? initialParameters);
+      setSources(hydrateWorkspaceSources(nextWorkspace.sources ?? []));
+      setArticles(nextWorkspace.articles ?? initialArticles);
+      setIngestionMessage(`Loaded workspace: ${nextWorkspace.title ?? "Untitled workspace"}`);
+      await refreshServerWorkspaces();
+    } catch (error) {
+      setIngestionMessage(error instanceof Error ? error.message : "Unable to load workspace.");
+    }
+  }
+
+  async function loadWorkspaceFromServer(status: WorkspaceStatus = "draft") {
+    try {
+      const response = await fetch(`${scraperApiBaseUrl}/workspaces?status=${status}`);
+      const payload = (await response.json()) as { workspaces?: Array<WorkspaceState & { id?: string; status?: WorkspaceStatus; title?: string; publishedAt?: string | null }>; error?: string };
+
+      if (!response.ok) {
+        throw new Error(payload.error ?? "Unable to load workspace draft.");
+      }
+
+      const latestWorkspace = payload.workspaces?.[0];
+      if (!latestWorkspace) {
+        throw new Error(status === "published" ? "No published workspace is available yet." : "No workspace drafts are available yet.");
+      }
+
+      setWorkspaceId(latestWorkspace.id ?? null);
+      setWorkspaceStatus(latestWorkspace.status ?? status);
+      setWorkspacePublishedAt(latestWorkspace.publishedAt ?? null);
+      setParameters(latestWorkspace.parameters ?? initialParameters);
+      setSources(hydrateWorkspaceSources(latestWorkspace.sources ?? []));
+      setArticles(latestWorkspace.articles ?? initialArticles);
+      await refreshServerWorkspaces();
+      setIngestionMessage(
+        status === "published"
+          ? `Loaded published workspace: ${latestWorkspace.title ?? parameters.title}`
+          : `Loaded workspace draft: ${latestWorkspace.title ?? parameters.title}`,
+      );
+    } catch (error) {
+      setIngestionMessage(error instanceof Error ? error.message : "Unable to load workspace draft.");
+    }
+  }
+
   function exportWorkspaceJson() {
     const workspace: WorkspaceState = {
       parameters,
@@ -798,20 +1201,88 @@ export default function MonitorDashboard() {
             </div>
             <div className="border border-zinc-200 bg-zinc-50 p-3">
               <span className="block font-semibold text-zinc-950">Persistence</span>
-              {isHydrated ? "Autosaved" : "Loading"}
+              Autosaved
             </div>
           </div>
         </div>
       </section>
+
+      {restoredWorkspaceNotice ? (
+        <div className="mx-auto max-w-7xl px-5 py-2 sm:px-8">
+          <div className="rounded-md bg-amber-100 px-4 py-2 text-sm font-medium text-amber-900">
+            {restoredWorkspaceNotice}
+          </div>
+        </div>
+      ) : null}
 
       <div className="mx-auto grid max-w-7xl gap-5 px-5 py-5 sm:px-8 xl:grid-cols-[360px_1fr]">
         <aside className="space-y-5">
           <section className="border border-zinc-200 bg-white p-4">
             <h2 className="text-lg font-semibold">7. Persistence</h2>
             <p className="mt-1 text-sm text-zinc-600">
-              Workspace changes are saved in this browser automatically.
+              Workspace changes are saved in this browser automatically and can be persisted as a draft or published report.
             </p>
+            <div className="mt-3 inline-flex rounded-full bg-zinc-100 px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.12em] text-zinc-700">
+              Status: {workspaceStatus === "published" ? "Published" : "Draft"}
+            </div>
+            {workspacePublishedAt ? (
+              <p className="mt-2 text-xs text-zinc-500">
+                Published {new Date(workspacePublishedAt).toLocaleString()}
+              </p>
+            ) : null}
+            {serverWorkspaces.length > 0 ? (
+              <div className="mt-4 rounded-md border border-zinc-200 bg-zinc-50 p-3">
+                <h3 className="text-sm font-semibold text-zinc-900">Saved workspaces</h3>
+                <ul className="mt-2 space-y-2 text-sm text-zinc-600">
+                  {serverWorkspaces.slice(0, 5).map((workspace) => (
+                    <li key={workspace.id ?? `${workspace.title ?? "workspace"}-${workspace.updatedAt ?? "unknown"}`} className="rounded-md border border-zinc-200 bg-white p-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (workspace.id) {
+                            void loadWorkspaceById(workspace.id);
+                          }
+                        }}
+                        className="w-full text-left"
+                      >
+                        <div className="font-medium text-zinc-800">{workspace.title ?? "Untitled workspace"}</div>
+                        <div className="mt-1 flex items-center gap-2 text-xs">
+                          <span className="rounded-full bg-zinc-100 px-2 py-1 uppercase tracking-[0.12em] text-zinc-700">
+                            {workspace.status ?? "draft"}
+                          </span>
+                          {workspace.updatedAt ? <span>{new Date(workspace.updatedAt).toLocaleString()}</span> : null}
+                        </div>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
             <div className="mt-4 grid gap-2">
+              <button
+                onClick={() => {
+                  void saveWorkspaceToServer("draft");
+                }}
+                className="rounded-md border border-zinc-300 px-3 py-2 text-sm font-semibold"
+              >
+                Save draft to server
+              </button>
+              <button
+                onClick={() => {
+                  void loadWorkspaceFromServer("draft");
+                }}
+                className="rounded-md border border-zinc-300 px-3 py-2 text-sm font-semibold"
+              >
+                Load latest draft
+              </button>
+              <button
+                onClick={() => {
+                  void loadWorkspaceFromServer("published");
+                }}
+                className="rounded-md border border-zinc-300 px-3 py-2 text-sm font-semibold"
+              >
+                Load latest published
+              </button>
               <button
                 onClick={exportWorkspaceJson}
                 className="rounded-md border border-zinc-300 px-3 py-2 text-sm font-semibold"
@@ -823,6 +1294,118 @@ export default function MonitorDashboard() {
                 className="rounded-md border border-rose-200 px-3 py-2 text-sm font-semibold text-rose-700"
               >
                 Reset workspace
+              </button>
+            </div>
+          </section>
+
+          <section className="border border-zinc-200 bg-white p-4">
+            <h2 className="text-lg font-semibold">8. Scraper Health</h2>
+            <p className="mt-1 text-sm text-zinc-600">
+              Monitor the server-side ingest loop, latest snapshot, and scheduler state.
+            </p>
+            <div className="mt-4 flex items-center gap-2">
+              <span
+                className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
+                  healthStatus.ok ? "bg-emerald-100 text-emerald-800" : "bg-rose-100 text-rose-800"
+                }`}
+              >
+                {healthStatus.ok ? "Online" : "Offline"}
+              </span>
+              <span className="rounded-full bg-zinc-100 px-2.5 py-1 text-xs font-semibold text-zinc-700">
+                {healthStatus.snapshotCount} snapshot items
+              </span>
+            </div>
+            <p className="mt-3 text-sm text-zinc-600">{healthMessage}</p>
+            <p className="mt-2 text-sm text-zinc-500">
+              {healthStatus.hasSnapshot && healthStatus.generatedAt
+                ? `Last snapshot: ${new Date(healthStatus.generatedAt).toLocaleString()}`
+                : "No snapshot has been written yet."}
+            </p>
+            <div className="mt-4 space-y-3">
+              <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3">
+                <h3 className="text-sm font-semibold text-zinc-900">Persisted state</h3>
+                <div className="mt-2 space-y-1 text-sm text-zinc-600">
+                  <div>Snapshots: {healthStatus.snapshotCount}</div>
+                  <div>Saved workspaces: {healthStatus.workspaceCount ?? serverWorkspaces.length}</div>
+                  <div>Latest workspace: {healthStatus.latestWorkspaceTitle ?? "None yet"}</div>
+                  {healthStatus.latestWorkspaceUpdatedAt ? (
+                    <div>Updated: {new Date(healthStatus.latestWorkspaceUpdatedAt).toLocaleString()}</div>
+                  ) : null}
+                </div>
+              </div>
+              <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3">
+                <h3 className="text-sm font-semibold text-zinc-900">ACLED auth</h3>
+                <div className="mt-2 text-sm text-zinc-600">
+                  {acledTokenStatus.ok && acledTokenStatus.token?.expires_at ? (
+                    <>
+                      <div className="font-medium text-emerald-700">Token available</div>
+                      <div>Expires: {new Date(acledTokenStatus.token.expires_at * 1000).toLocaleString()}</div>
+                    </>
+                  ) : (
+                    <div className="font-medium text-amber-700">No stored ACLED token yet</div>
+                  )}
+                </div>
+              </div>
+              {healthStatus.sourceHealth.length > 0 ? (
+                <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3">
+                  <h3 className="text-sm font-semibold text-zinc-900">Source status</h3>
+                  <ul className="mt-2 space-y-2 text-sm text-zinc-600">
+                    {healthStatus.sourceHealth.map((entry) => (
+                      <li key={entry.name} className="flex items-center justify-between gap-2">
+                        <span>{entry.name}</span>
+                        <span className={`rounded-full px-2 py-1 text-xs font-semibold ${entry.ok ? "bg-emerald-100 text-emerald-800" : "bg-rose-100 text-rose-800"}`}>
+                          {entry.ok ? `${entry.count} item${entry.count === 1 ? "" : "s"}` : "error"}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+              {healthStatus.lastErrors.length > 0 ? (
+                <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3">
+                  <h3 className="text-sm font-semibold text-zinc-900">Recent failures</h3>
+                  <ul className="mt-2 space-y-2 text-sm text-zinc-600">
+                    {healthStatus.lastErrors.map((entry, index) => (
+                      <li key={`${entry.source}-${index}`} className="border-l-2 border-rose-300 pl-2">
+                        <div className="font-medium text-zinc-800">{entry.source}</div>
+                        <div>{entry.message}</div>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+              {healthStatus.scheduler ? (
+                <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3">
+                  <h3 className="text-sm font-semibold text-zinc-900">Scheduler</h3>
+                  <p className="mt-2 text-sm text-zinc-600">
+                    {healthStatus.scheduler.enabled ? "Enabled" : "Disabled"} • {healthStatus.scheduler.running ? "Running" : "Stopped"}
+                  </p>
+                  <p className="mt-1 text-sm text-zinc-600">
+                    Interval: {healthStatus.scheduler.intervalMinutes} min
+                  </p>
+                  <p className="mt-1 text-sm text-zinc-600">
+                    Next run: {healthStatus.scheduler.nextRunAt ? new Date(healthStatus.scheduler.nextRunAt).toLocaleString() : "Not scheduled"}
+                  </p>
+                </div>
+              ) : null}
+              {healthStatus.runHistory.length > 0 ? (
+                <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3">
+                  <h3 className="text-sm font-semibold text-zinc-900">Recent runs</h3>
+                  <ul className="mt-2 space-y-2 text-sm text-zinc-600">
+                    {healthStatus.runHistory.slice(0, 5).map((entry, index) => (
+                      <li key={`${entry.runAt}-${index}`} className="border-l-2 border-zinc-300 pl-2">
+                        <div className="font-medium text-zinc-800">{new Date(entry.runAt).toLocaleString()}</div>
+                        <div>{entry.count} article{entry.count === 1 ? "" : "s"}</div>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+              <button
+                onClick={() => void refreshHealthStatus()}
+                className="rounded-md border border-zinc-300 px-3 py-2 text-sm font-semibold"
+              >
+                Refresh health
               </button>
             </div>
           </section>
@@ -1026,9 +1609,20 @@ export default function MonitorDashboard() {
                     {sources.map((source) => (
                       <tr key={source.id} className="border-b border-zinc-100">
                         <td className="px-3 py-3 font-semibold">
-                          <span className={source.enabled ? "" : "text-zinc-400"}>
-                            {source.name}
-                          </span>
+                          <div className="flex items-center gap-2">
+                            <span className={source.enabled ? "" : "text-zinc-400"}>
+                              {source.name}
+                            </span>
+                            {source.backendSupported ? (
+                              <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-[0.12em] text-emerald-800">
+                                live
+                              </span>
+                            ) : (
+                              <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-600">
+                                manual
+                              </span>
+                            )}
+                          </div>
                         </td>
                         <td className="px-3 py-3 text-zinc-600">{source.type}</td>
                         <td className="px-3 py-3 text-zinc-600">{source.coverage}</td>
@@ -1099,17 +1693,13 @@ export default function MonitorDashboard() {
               </div>
               <div className="flex flex-wrap gap-2">
                 <button
-                  onClick={simulateIngestionRun}
-                  className="w-fit rounded-md border border-zinc-300 px-4 py-2 text-sm font-semibold"
-                >
-                  Run source scan
-                </button>
-                <button
-                  onClick={ingestReliefWebReports}
+                  onClick={() => {
+                    void ingestReliefWebReports();
+                  }}
                   disabled={isIngesting}
                   className="w-fit rounded-md border border-zinc-950 px-4 py-2 text-sm font-semibold disabled:cursor-not-allowed disabled:border-zinc-200 disabled:text-zinc-400"
                 >
-                  {isIngesting ? "Ingesting ReliefWeb" : "Ingest ReliefWeb"}
+                  {isIngesting ? "Running ingest" : "Run selected sources"}
                 </button>
                 <button
                   onClick={processQueuedArticles}
@@ -1189,7 +1779,7 @@ export default function MonitorDashboard() {
 
             <div className="mt-4 grid gap-3">
               {filteredArticles.map((article) => (
-                <article key={article.id} className="border border-zinc-200 bg-zinc-50 p-4">
+                <article key={`article-${article.id}`} className="border border-zinc-200 bg-zinc-50 p-4">
                   <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                     <div>
                       <div className="flex flex-wrap gap-2 text-xs font-semibold text-zinc-500">
@@ -1248,17 +1838,56 @@ export default function MonitorDashboard() {
                 Convert queued source material into structured report evidence.
               </p>
               <div className="mt-4 grid gap-3">
-                <div className="border border-zinc-200 bg-zinc-50 p-3">
-                  <span className="block text-2xl font-semibold">{processingQueue.length}</span>
-                  <span className="text-sm text-zinc-600">Queued for extraction</span>
+                <div
+                  className={`border-l-4 border px-3 py-3 ${
+                    processingQueue.length > 0
+                      ? "border-l-amber-500 border-zinc-200 bg-amber-50"
+                      : "border-l-zinc-300 border-zinc-200 bg-zinc-50"
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-semibold text-zinc-600">Queued</span>
+                    {processingQueue.length > 0 && (
+                      <span className="inline-block rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">
+                        Pending
+                      </span>
+                    )}
+                  </div>
+                  <span className="mt-1 block text-2xl font-semibold text-zinc-950">{processingQueue.length}</span>
                 </div>
-                <div className="border border-zinc-200 bg-zinc-50 p-3">
-                  <span className="block text-2xl font-semibold">{reviewQueue.length}</span>
-                  <span className="text-sm text-zinc-600">Awaiting analyst review</span>
+                <div
+                  className={`border-l-4 border px-3 py-3 ${
+                    reviewQueue.length > 0
+                      ? "border-l-sky-500 border-zinc-200 bg-sky-50"
+                      : "border-l-zinc-300 border-zinc-200 bg-zinc-50"
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-semibold text-zinc-600">Review</span>
+                    {reviewQueue.length > 0 && (
+                      <span className="inline-block rounded-full bg-sky-100 px-2 py-0.5 text-xs font-semibold text-sky-800">
+                        Awaiting
+                      </span>
+                    )}
+                  </div>
+                  <span className="mt-1 block text-2xl font-semibold text-zinc-950">{reviewQueue.length}</span>
                 </div>
-                <div className="border border-zinc-200 bg-zinc-50 p-3">
-                  <span className="block text-2xl font-semibold">{approvedArticles.length}</span>
-                  <span className="text-sm text-zinc-600">Approved for report</span>
+                <div
+                  className={`border-l-4 border px-3 py-3 ${
+                    approvedArticles.length > 0
+                      ? "border-l-emerald-500 border-zinc-200 bg-emerald-50"
+                      : "border-l-zinc-300 border-zinc-200 bg-zinc-50"
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-semibold text-zinc-600">Approved</span>
+                    {approvedArticles.length > 0 && (
+                      <span className="inline-block rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-800">
+                        Ready
+                      </span>
+                    )}
+                  </div>
+                  <span className="mt-1 block text-2xl font-semibold text-zinc-950">{approvedArticles.length}</span>
                 </div>
               </div>
               <button
@@ -1403,6 +2032,14 @@ export default function MonitorDashboard() {
               </div>
               <div className="flex flex-wrap gap-2">
                 <button
+                  onClick={() => {
+                    void saveWorkspaceToServer("published");
+                  }}
+                  className="rounded-md border border-zinc-300 px-3 py-2 text-sm font-semibold"
+                >
+                  Publish draft
+                </button>
+                <button
                   onClick={exportWordDocument}
                   className="rounded-md border border-zinc-300 px-3 py-2 text-sm font-semibold"
                 >
@@ -1444,8 +2081,22 @@ export default function MonitorDashboard() {
                       During the reporting period, {approvedArticles.length} approved source
                       item{approvedArticles.length === 1 ? "" : "s"} were cleared for inclusion
                       across {new Set(approvedArticles.map((article) => article.region)).size} area
-                      scope{approvedArticles.length === 1 ? "" : "s"}.
+                      scope{approvedArticles.length === 1 ? "" : "s"}. Coverage includes{" "}
+                      {new Set(approvedArticles.map((article) => article.subject)).size} distinct subject
+                      area{new Set(approvedArticles.map((article) => article.subject)).size === 1 ? "" : "s"}.
                     </p>
+                    {approvedArticles.length > 0 && (
+                      <div className="mt-3 grid gap-2 border-t border-zinc-200 pt-3 text-xs text-zinc-600 sm:grid-cols-2">
+                        <div>
+                          <span className="font-semibold">Regions:</span>{" "}
+                          {Array.from(new Set(approvedArticles.map((article) => article.region))).join(", ")}
+                        </div>
+                        <div>
+                          <span className="font-semibold">Subjects:</span>{" "}
+                          {Array.from(new Set(approvedArticles.map((article) => article.subject))).join(", ")}
+                        </div>
+                      </div>
+                    )}
                   </section>
 
                   {reportDraft.map((group, groupIndex) => (

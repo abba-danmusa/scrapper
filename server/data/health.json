@@ -1,0 +1,276 @@
+{
+  "generatedAt": "2026-07-26T20:31:37.518Z",
+  "lastRunAt": "2026-07-26T20:31:37.518Z",
+  "sourceHealth": [],
+  "lastErrors": [],
+  "runHistory": [
+    {
+      "runAt": "2026-07-26T20:31:37.518Z",
+      "count": 0,
+      "sourceHealth": [],
+      "lastErrors": []
+    },
+    {
+      "runAt": "2026-07-26T20:26:58.761Z",
+      "count": 0,
+      "sourceHealth": [],
+      "lastErrors": []
+    },
+    {
+      "runAt": "2026-07-26T20:20:48.233Z",
+      "count": 0,
+      "sourceHealth": [],
+      "lastErrors": []
+    },
+    {
+      "runAt": "2026-07-26T17:51:29.711Z",
+      "count": 194,
+      "sourceHealth": [
+        {
+          "name": "ReliefWeb",
+          "ok": true,
+          "count": 0,
+          "error": null,
+          "checkedAt": "2026-07-26T17:50:48.999Z"
+        },
+        {
+          "name": "RSS",
+          "ok": true,
+          "count": 179,
+          "error": null,
+          "checkedAt": "2026-07-26T17:51:09.444Z"
+        },
+        {
+          "name": "HTML",
+          "ok": true,
+          "count": 16,
+          "error": null,
+          "checkedAt": "2026-07-26T17:51:28.771Z"
+        },
+        {
+          "name": "ACLED",
+          "ok": true,
+          "count": 0,
+          "error": null,
+          "checkedAt": "2026-07-26T17:51:29.664Z"
+        }
+      ],
+      "lastErrors": []
+    },
+    {
+      "runAt": "2026-07-26T17:40:15.419Z",
+      "count": 194,
+      "sourceHealth": [
+        {
+          "name": "ReliefWeb",
+          "ok": true,
+          "count": 0,
+          "error": null,
+          "checkedAt": "2026-07-26T17:39:33.676Z"
+        },
+        {
+          "name": "RSS",
+          "ok": true,
+          "count": 179,
+          "error": null,
+          "checkedAt": "2026-07-26T17:39:52.339Z"
+        },
+        {
+          "name": "HTML",
+          "ok": true,
+          "count": 16,
+          "error": null,
+          "checkedAt": "2026-07-26T17:40:14.439Z"
+        },
+        {
+          "name": "ACLED",
+          "ok": true,
+          "count": 0,
+          "error": null,
+          "checkedAt": "2026-07-26T17:40:15.364Z"
+        }
+      ],
+      "lastErrors": []
+    },
+    {
+      "runAt": "2026-07-26T17:37:17.161Z",
+      "count": 194,
+      "sourceHealth": [
+        {
+          "name": "ReliefWeb",
+          "ok": true,
+          "count": 0,
+          "error": null,
+          "checkedAt": "2026-07-26T17:36:28.683Z"
+        },
+        {
+          "name": "RSS",
+          "ok": true,
+          "count": 179,
+          "error": null,
+          "checkedAt": "2026-07-26T17:36:56.811Z"
+        },
+        {
+          "name": "HTML",
+          "ok": true,
+          "count": 16,
+          "error": null,
+          "checkedAt": "2026-07-26T17:37:16.289Z"
+        },
+        {
+          "name": "ACLED",
+          "ok": true,
+          "count": 0,
+          "error": null,
+          "checkedAt": "2026-07-26T17:37:17.140Z"
+        }
+      ],
+      "lastErrors": []
+    },
+    {
+      "runAt": "2026-07-26T17:36:14.080Z",
+      "count": 194,
+      "sourceHealth": [
+        {
+          "name": "ReliefWeb",
+          "ok": true,
+          "count": 0,
+          "error": null,
+          "checkedAt": "2026-07-26T17:35:32.821Z"
+        },
+        {
+          "name": "RSS",
+          "ok": true,
+          "count": 179,
+          "error": null,
+          "checkedAt": "2026-07-26T17:35:58.260Z"
+        },
+        {
+          "name": "HTML",
+          "ok": true,
+          "count": 16,
+          "error": null,
+          "checkedAt": "2026-07-26T17:36:13.084Z"
+        },
+        {
+          "name": "ACLED",
+          "ok": true,
+          "count": 0,
+          "error": null,
+          "checkedAt": "2026-07-26T17:36:14.044Z"
+        }
+      ],
+      "lastErrors": []
+    },
+    {
+      "runAt": "2026-07-26T17:35:10.834Z",
+      "count": 194,
+      "sourceHealth": [
+        {
+          "name": "ReliefWeb",
+          "ok": false,
+          "count": 0,
+          "error": "Unknown source error",
+          "checkedAt": "2026-07-26T17:34:36.738Z"
+        },
+        {
+          "name": "RSS",
+          "ok": true,
+          "count": 179,
+          "error": null,
+          "checkedAt": "2026-07-26T17:34:55.622Z"
+        },
+        {
+          "name": "HTML",
+          "ok": true,
+          "count": 16,
+          "error": null,
+          "checkedAt": "2026-07-26T17:35:10.033Z"
+        },
+        {
+          "name": "ACLED",
+          "ok": true,
+          "count": 0,
+          "error": null,
+          "checkedAt": "2026-07-26T17:35:10.788Z"
+        }
+      ],
+      "lastErrors": [
+        {
+          "source": "ReliefWeb",
+          "message": "Unknown source error"
+        }
+      ]
+    },
+    {
+      "runAt": "2026-07-26T17:34:56.486Z",
+      "count": 194,
+      "sourceHealth": [
+        {
+          "name": "ReliefWeb",
+          "ok": true,
+          "count": 0,
+          "error": null,
+          "checkedAt": "2026-07-26T17:34:18.457Z"
+        },
+        {
+          "name": "RSS",
+          "ok": true,
+          "count": 179,
+          "error": null,
+          "checkedAt": "2026-07-26T17:34:35.089Z"
+        },
+        {
+          "name": "HTML",
+          "ok": true,
+          "count": 16,
+          "error": null,
+          "checkedAt": "2026-07-26T17:34:50.722Z"
+        },
+        {
+          "name": "ACLED",
+          "ok": true,
+          "count": 0,
+          "error": null,
+          "checkedAt": "2026-07-26T17:34:56.454Z"
+        }
+      ],
+      "lastErrors": []
+    },
+    {
+      "runAt": "2026-07-26T17:26:40.991Z",
+      "count": 194,
+      "sourceHealth": [
+        {
+          "name": "ReliefWeb",
+          "ok": true,
+          "count": 0,
+          "error": null,
+          "checkedAt": "2026-07-26T17:25:53.133Z"
+        },
+        {
+          "name": "RSS",
+          "ok": true,
+          "count": 179,
+          "error": null,
+          "checkedAt": "2026-07-26T17:26:22.045Z"
+        },
+        {
+          "name": "HTML",
+          "ok": true,
+          "count": 16,
+          "error": null,
+          "checkedAt": "2026-07-26T17:26:40.275Z"
+        },
+        {
+          "name": "ACLED",
+          "ok": true,
+          "count": 0,
+          "error": null,
+          "checkedAt": "2026-07-26T17:26:40.951Z"
+        }
+      ],
+      "lastErrors": []
+    }
+  ]
+}

@@ -1,6 +1,16 @@
+/* eslint-disable @typescript-eslint/no-require-imports */
 const axios = require('axios');
 const cheerio = require('cheerio');
-const { chromium } = require('playwright');
+
+let chromium = null;
+try {
+  ({ chromium } = require('playwright'));
+} catch (err) {
+  console.warn(
+    'Playwright is not installed or could not be loaded. Browser rendering fallback will be disabled.',
+    err && err.message ? err.message : err,
+  );
+}
 
 const USER_AGENTS = [
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -12,6 +22,16 @@ const USER_AGENTS = [
 
 function getRandomUserAgent() {
   return USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
+}
+
+function buildDefaultHeaders(userAgent) {
+  return {
+    'User-Agent': userAgent,
+    Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    'Accept-Language': 'en-US,en;q=0.9',
+    'Cache-Control': 'no-cache',
+    Pragma: 'no-cache'
+  };
 }
 
 const robotsCache = new Map();
@@ -47,12 +67,23 @@ async function getRobotsRules(domainUrl) {
             password: decodeURIComponent(proxyUrl.password)
           };
         }
-      } catch (err) {
+      } catch {
         // ignore proxy parsing error
       }
     }
 
-    const res = await axios.get(robotsUrl, axiosConfig);
+    // Try a couple of times for flaky networks
+    let res = null;
+    try {
+      res = await axios.get(robotsUrl, axiosConfig);
+    } catch {
+      try {
+        await new Promise((r) => setTimeout(r, 500));
+        res = await axios.get(robotsUrl, axiosConfig);
+      } catch (error) {
+        throw error;
+      }
+    }
     const content = res.data;
 
     if (typeof content === 'string') {
@@ -84,8 +115,8 @@ async function getRobotsRules(domainUrl) {
         }
       }
     }
-  } catch (err) {
-    console.info(`Could not fetch robots.txt for ${domainUrl}: ${err.message}. Assuming all paths allowed.`);
+} catch (error) {
+      console.info(`Could not fetch robots.txt for ${domainUrl}: ${error.message}. Assuming all paths allowed.`);
   }
 
   robotsCache.set(domainUrl, rules);
@@ -117,8 +148,8 @@ async function isUrlAllowedByRobotsTxt(targetUrl) {
     });
 
     return !isDisallowed;
-  } catch (err) {
-    console.warn(`Error checking robots.txt compliance for ${targetUrl}:`, err.message);
+  } catch (error) {
+    console.warn(`Error checking robots.txt compliance for ${targetUrl}:`, error.message);
     return true; // Default to allow on error
   }
 }
@@ -135,7 +166,7 @@ async function fetchPage(url, needsJs = false) {
   if (!needsJs) {
     const axiosConfig = {
       timeout: 15000,
-      headers: { 'User-Agent': userAgent }
+      headers: buildDefaultHeaders(userAgent)
     };
     if (process.env.SCRAPER_PROXY) {
       try {
@@ -151,12 +182,24 @@ async function fetchPage(url, needsJs = false) {
             password: decodeURIComponent(proxyUrl.password)
           };
         }
-      } catch (err) {
+      } catch {
         // ignore proxy parsing error
       }
     }
-    const res = await axios.get(url, axiosConfig);
-    return res.data;
+
+    try {
+      let response = null;
+      try {
+        response = await axios.get(url, axiosConfig);
+      } catch {
+        // brief backoff then retry once
+        await new Promise((r) => setTimeout(r, 700));
+        response = await axios.get(url, axiosConfig);
+      }
+      return response.data;
+    } catch (error) {
+      console.warn(`HTTP request failed for ${url}, falling back to browser render:`, error && error.message ? error.message : error);
+    }
   }
 
   const browserOptions = {
@@ -168,18 +211,156 @@ async function fetchPage(url, needsJs = false) {
     };
   }
 
-  const browser = await chromium.launch(browserOptions);
+  if (!chromium) {
+    console.info(`Playwright is unavailable; skipping browser render for ${url}.`);
+    return null;
+  }
+
+  let browser;
   try {
+    browser = await chromium.launch(browserOptions);
     const page = await browser.newPage({
-      userAgent: userAgent
+      userAgent: userAgent,
+      extraHTTPHeaders: buildDefaultHeaders(userAgent)
     });
     await page.goto(url, { waitUntil: 'networkidle' });
     const content = await page.content();
     await page.close();
     return content;
+  } catch (error) {
+    console.warn(`Browser render failed for ${url}:`, error && error.message ? error.message : error);
+    return null;
   } finally {
-    await browser.close();
+    if (browser) {
+      await browser.close();
+    }
   }
+}
+
+function cleanArticleNode($node) {
+  const selectors = [
+    'script',
+    'style',
+    'noscript',
+    'iframe',
+    'ins.adsbygoogle',
+    '.adsbygoogle',
+    '.article-share-bottom',
+    '.sharethis-inline-share-buttons',
+    '.share-buttons',
+    '.social-share',
+    '.related-posts',
+    '.related-articles',
+    '.comments',
+    '.comment',
+    '.newsletter',
+    '.ads',
+    '.advertisement',
+    '.advert',
+    '.post-meta',
+    '.meta',
+    '.date',
+    '.byline'
+  ];
+
+  selectors.forEach((selector) => {
+    $node.find(selector).remove();
+  });
+}
+
+function normalizeDateString(value) {
+  if (!value || typeof value !== 'string') return null;
+  const cleaned = value.replace(/\s+/g, ' ').trim();
+
+  const isoMatch = cleaned.match(/(\d{4}-\d{2}-\d{2})/);
+  if (isoMatch) {
+    return isoMatch[1];
+  }
+
+  const ymdMatch = cleaned.match(/(\d{4})\/(\d{2})\/(\d{2})/);
+  if (ymdMatch) {
+    return `${ymdMatch[1]}-${ymdMatch[2]}-${ymdMatch[3]}`;
+  }
+
+  const monthMap = {
+    january: '01',
+    february: '02',
+    march: '03',
+    april: '04',
+    may: '05',
+    june: '06',
+    july: '07',
+    august: '08',
+    september: '09',
+    october: '10',
+    november: '11',
+    december: '12'
+  };
+
+  const longDateMatch = cleaned.match(/(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{1,2}),\s*(\d{4})/i);
+  if (longDateMatch) {
+    const month = monthMap[longDateMatch[1].toLowerCase()];
+    const day = longDateMatch[2].padStart(2, '0');
+    return `${longDateMatch[3]}-${month}-${day}`;
+  }
+
+  const shortDateMatch = cleaned.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (shortDateMatch) {
+    const month = shortDateMatch[1].padStart(2, '0');
+    const day = shortDateMatch[2].padStart(2, '0');
+    return `${shortDateMatch[3]}-${month}-${day}`;
+  }
+
+  const parsed = new Date(cleaned);
+  if (!Number.isNaN(parsed.valueOf())) {
+    return parsed.toISOString().slice(0, 10);
+  }
+
+  return null;
+}
+
+function extractArticleDate($$, html, selector) {
+  if (selector) {
+    const dateElement = $$(selector).first();
+    if (dateElement.length) {
+      const rawDate = dateElement.attr('datetime') || dateElement.attr('content') || dateElement.text();
+      const normalized = normalizeDateString(rawDate);
+      if (normalized) return normalized;
+    }
+  }
+
+  const jsonLdText = $$('script[type="application/ld+json"]').text();
+  const jsonLdMatch = jsonLdText.match(/"datePublished"\s*:\s*"([^"]+)"/);
+  if (jsonLdMatch) {
+    const normalized = normalizeDateString(jsonLdMatch[1]);
+    if (normalized) return normalized;
+  }
+
+  const found = html.match(/(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},\s*\d{4}/i);
+  if (found) {
+    const normalized = normalizeDateString(found[0]);
+    if (normalized) return normalized;
+  }
+
+  const fallbackMatch = html.match(/(\d{4}-\d{2}-\d{2})/);
+  if (fallbackMatch) {
+    return fallbackMatch[1];
+  }
+
+  return null;
+}
+
+function isValidAnchorHref(href, site) {
+  if (!href || typeof href !== 'string') return false;
+  const trimmed = href.trim();
+  if (trimmed.startsWith('#') || trimmed.startsWith('mailto:') || trimmed.startsWith('javascript:')) return false;
+  if (site.hrefPattern instanceof RegExp) {
+    return site.hrefPattern.test(trimmed);
+  }
+  if (typeof site.hrefPattern === 'function') {
+    return site.hrefPattern(trimmed);
+  }
+  return true;
 }
 
 // A small set of site configs with selectors. Extend as needed.
@@ -189,14 +370,42 @@ const SITE_CONFIGS = [
     url: 'https://www.thecable.ng/',
     listSelector: 'article a',
     needsJs: false,
-    article: { title: 'h1', body: 'article', date: 'time' }
+    cleanupSelectors: ['.article-share-bottom', '.sharethis-inline-share-buttons', '.adasprso-inline-container', '.cs-posts-area__read-next', '.tdb-block-text', '.adsbygoogle'],
+    article: { title: 'h1', body: '.entry-content', date: 'meta[property="article:published_time"]' }
   },
   {
     name: 'Premium Times',
     url: 'https://www.premiumtimesng.com/',
     listSelector: '.td-module-thumb a',
     needsJs: false,
+    cleanupSelectors: ['.td-post-sharing', '.related-posts', '.td-ps-share', '.adsbygoogle'],
     article: { title: 'h1', body: '.td-post-content', date: 'time' }
+  },
+  {
+    name: 'HumAngle',
+    url: 'https://humanglemedia.com/',
+    listSelector: '.post-title a',
+    needsJs: false,
+    cleanupSelectors: ['.adasprso-inline-container', '.article-share-bottom', '.sharethis-inline-share-buttons', '.support', '.wp-block-group'],
+    article: { title: 'h1', body: '.entry-content', date: 'meta[property="article:published_time"]' }
+  },
+  {
+    name: 'Daily Trust',
+    url: 'https://dailytrust.com/',
+    listSelector: '.list_card a',
+    needsJs: false,
+    cleanupSelectors: ['.related-posts', '.share-buttons', '.adsbygoogle', '.td-module-meta-info'],
+    hrefPattern: /^\/\d{4}-[^\s]+|^\/[^\s]+-\d{4}/,
+    article: { title: 'h1', body: '.body.article__body', date: 'script[type="application/ld+json"]' }
+  },
+  {
+    name: 'SaharaReporters',
+    url: 'https://saharareporters.com/',
+    listSelector: '.node--type-article a',
+    needsJs: false,
+    cleanupSelectors: ['.article-share-bottom', '.sharethis-inline-share-buttons', '.adsbygoogle', '.related-posts', '.related-articles'],
+    hrefPattern: /^(?:\/\d{4}\/\d{2}\/\d{2}\/[^\s]+|\/articles\?f%5B0%5D=article_type%3A\d+)/,
+    article: { title: 'h1', body: '.content.lead', date: 'script[type="application/ld+json"]' }
   }
 ];
 
@@ -208,11 +417,15 @@ async function searchHtmlSources({ subjects = [], regions = [], limitPerSite = 5
       const listHtml = await fetchPage(site.url, site.needsJs);
       if (!listHtml) continue;
       const $ = cheerio.load(listHtml);
-      const anchors = $(site.listSelector)
-        .map((i, el) => $(el).attr('href'))
-        .get()
-        .filter(Boolean)
-        .slice(0, limitPerSite);
+      const anchors = Array.from(
+        new Set(
+          $(site.listSelector)
+            .map((i, el) => $(el).attr('href'))
+            .get()
+            .filter(Boolean)
+            .filter((href) => isValidAnchorHref(href, site))
+        )
+      ).slice(0, limitPerSite);
 
       for (const href of anchors) {
         try {
@@ -221,9 +434,16 @@ async function searchHtmlSources({ subjects = [], regions = [], limitPerSite = 5
           if (!articleHtml) continue;
           const $$ = cheerio.load(articleHtml);
           const title = $$(site.article.title).first().text().trim() || 'Untitled Article';
-          const body = $$(site.article.body).text().trim() || '';
-          const date = $$(site.article.date).first().attr('datetime') || $$(site.article.date).first().text().slice(0, 10) || new Date().toISOString().slice(0, 10);
-          const text = `${title} ${body}`;
+          const bodyElement = $$(site.article.body).first();
+          if (site.cleanupSelectors && bodyElement.length) {
+            site.cleanupSelectors.forEach((selector) => bodyElement.find(selector).remove());
+          }
+          if (bodyElement.length) {
+            cleanArticleNode(bodyElement);
+          }
+          const body = bodyElement.text().trim() || '';
+          const date = extractArticleDate($$, articleHtml, site.article.date) || new Date().toISOString().slice(0, 10);
+          const text = `${title} ${body}`.replace(/\s+/g, ' ').trim();
 
           results.push({
             title,

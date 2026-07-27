@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-require-imports */
 const assert = require('assert');
 const { ingestPipeline } = require('../src/ingest/pipeline');
 const { readSnapshot } = require('../src/ingest/store');

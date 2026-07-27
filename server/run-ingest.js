@@ -1,4 +1,4 @@
-const path = require('path');
+/* eslint-disable @typescript-eslint/no-require-imports */
 const { ingestPipeline } = require('./src/ingest/pipeline');
 
 (async () => {
