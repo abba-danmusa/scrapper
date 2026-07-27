@@ -90,6 +90,11 @@ type HealthStatus = {
   latestWorkspaceTitle?: string | null;
   latestWorkspaceStatus?: WorkspaceStatus | null;
   latestWorkspaceUpdatedAt?: string | null;
+  mongo?: {
+    configured: boolean;
+    connected: boolean;
+    message: string;
+  };
   scheduler?: {
     enabled: boolean;
     running: boolean;
@@ -242,7 +247,6 @@ const assignableReportSections: ReportSection[] = [
 ];
 
 const romanNumerals = ["I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X"];
-const workspaceStorageKey = "northern-nigeria-situation-monitor:v1";
 const scraperApiBaseUrl =
   process.env.NEXT_PUBLIC_SCRAPER_API_URL || "http://localhost:4000";
 
@@ -434,32 +438,6 @@ function hydrateWorkspaceSources(rawSources: unknown): Source[] {
   return mergedSources;
 }
 
-function readStoredWorkspace() {
-  if (typeof window === "undefined") {
-    return null;
-  }
-
-  const savedWorkspace = localStorage.getItem(workspaceStorageKey);
-
-  if (!savedWorkspace) {
-    return null;
-  }
-
-  try {
-    const raw = JSON.parse(savedWorkspace) as WorkspaceState;
-
-    return {
-      ...raw,
-      sources: hydrateWorkspaceSources(raw.sources),
-      parameters: raw.parameters ?? initialParameters,
-      articles: Array.isArray(raw.articles) ? raw.articles : initialArticles,
-    };
-  } catch {
-    localStorage.removeItem(workspaceStorageKey);
-    return null;
-  }
-}
-
 function ConfidenceBadge({ confidence }: { confidence: Confidence }) {
   const styles = {
     High: "bg-emerald-100 text-emerald-800",
@@ -491,52 +469,17 @@ function StatusBadge({ status }: { status: IngestionStatus }) {
 }
 
 export default function MonitorDashboard() {
-  const initialWorkspace = useMemo(() => readStoredWorkspace(), []);
-
-  const mergedSources = useMemo(() => {
-    const stored = Array.isArray(initialWorkspace?.sources) ? (initialWorkspace?.sources as Source[]) : [];
-    const storedByName = new Map(stored.map((s) => [s.name, s]));
-
-    // Merge default supported backend sources with any stored overrides
-    const mergedDefaults = initialSources.map((def) => {
-      const storedEntry = storedByName.get(def.name);
-      if (storedEntry) {
-        return {
-          ...def,
-          ...storedEntry,
-          // ensure known defaults are always marked backendSupported
-          backendSupported: true,
-        } as Source;
-      }
-
-      return { ...def } as Source;
-    });
-
-    // Append any additional stored sources that are not part of the defaults
-    const extras = stored
-      .filter((s) => !initialSources.some((d) => d.name === s.name))
-      .map((s) => ({ ...s, backendSupported: s.backendSupported ?? false }));
-
-    return [...mergedDefaults, ...extras];
-  }, [initialWorkspace]);
-
-  const initialSourcesState = mergedSources.length > 0 ? mergedSources : initialSources;
-
-  const [parameters, setParameters] = useState<ReportParameters>(initialWorkspace?.parameters ?? initialParameters);
-  const [sources, setSources] = useState<Source[]>(initialSourcesState);
-  const [articles, setArticles] = useState<Article[]>(initialWorkspace?.articles ?? initialArticles);
-  const [restoredWorkspaceNotice, setRestoredWorkspaceNotice] = useState<string | null>(
-    initialWorkspace ? `Restored workspace: ${initialWorkspace.parameters?.title ?? "Saved workspace"}` : null,
-  );
+  const [parameters, setParameters] = useState<ReportParameters>(initialParameters);
+  const [sources, setSources] = useState<Source[]>(initialSources);
+  const [articles, setArticles] = useState<Article[]>(initialArticles);
+  const [restoredWorkspaceNotice, setRestoredWorkspaceNotice] = useState<string | null>(null);
   const [sourceForm, setSourceForm] = useState(emptySourceForm);
   const [editingSourceId, setEditingSourceId] = useState<number | null>(null);
   const [articleForm, setArticleForm] = useState(emptyArticleForm);
   const [ingestionMessage, setIngestionMessage] = useState("Ready to ingest source material.");
   const [workspaceId, setWorkspaceId] = useState<string | null>(null);
-  const [workspaceStatus, setWorkspaceStatus] = useState<WorkspaceStatus>(
-    (initialWorkspace?.status as WorkspaceStatus | undefined) ?? "draft",
-  );
-  const [workspacePublishedAt, setWorkspacePublishedAt] = useState<string | null>(initialWorkspace?.publishedAt ?? null);
+  const [workspaceStatus, setWorkspaceStatus] = useState<WorkspaceStatus>("draft");
+  const [workspacePublishedAt, setWorkspacePublishedAt] = useState<string | null>(null);
   const [isIngesting, setIsIngesting] = useState(false);
   const [healthStatus, setHealthStatus] = useState<HealthStatus>({
     ok: false,
@@ -553,14 +496,6 @@ export default function MonitorDashboard() {
   const [serverWorkspaces, setServerWorkspaces] = useState<WorkspaceSummary[]>([]);
   const [acledTokenStatus, setAcledTokenStatus] = useState<AcledTokenStatus>({ ok: false, token: null });
   const [activeModal, setActiveModal] = useState<"workspace" | "health" | "draft" | null>(null);
-
-  useEffect(() => {
-    if (initialWorkspace) {
-      const timer = window.setTimeout(() => setRestoredWorkspaceNotice(null), 6000);
-      return () => window.clearTimeout(timer);
-    }
-    return undefined;
-  }, [initialWorkspace]);
 
   async function refreshHealthStatus() {
     try {
@@ -581,6 +516,7 @@ export default function MonitorDashboard() {
         latestWorkspaceTitle: payload.latestWorkspaceTitle ?? null,
         latestWorkspaceStatus: (payload.latestWorkspaceStatus as WorkspaceStatus | null | undefined) ?? null,
         latestWorkspaceUpdatedAt: payload.latestWorkspaceUpdatedAt ?? null,
+        mongo: payload.mongo,
         scheduler: payload.scheduler,
       });
       setHealthMessage(
@@ -622,6 +558,7 @@ export default function MonitorDashboard() {
 
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
+      void loadWorkspaceFromServer("draft");
       void refreshHealthStatus();
       void refreshServerWorkspaces();
       void refreshAcledAuthStatus();
@@ -629,18 +566,6 @@ export default function MonitorDashboard() {
 
     return () => window.clearTimeout(timeoutId);
   }, []);
-
-  useEffect(() => {
-    const workspace: WorkspaceState = {
-      status: workspaceStatus,
-      publishedAt: workspacePublishedAt,
-      parameters,
-      sources,
-      articles,
-    };
-
-    localStorage.setItem(workspaceStorageKey, JSON.stringify(workspace));
-  }, [articles, parameters, sources, workspacePublishedAt, workspaceStatus]);
 
   const enabledSources = useMemo(
     () => sources.filter((source) => source.enabled),
@@ -879,7 +804,7 @@ export default function MonitorDashboard() {
     setWorkspaceId(null);
     setWorkspaceStatus("draft");
     setWorkspacePublishedAt(null);
-    localStorage.removeItem(workspaceStorageKey);
+    setRestoredWorkspaceNotice(null);
     setIngestionMessage("Workspace reset to the default sample data.");
   }
 
@@ -1412,7 +1337,7 @@ export default function MonitorDashboard() {
         </aside>
 
         <div className="space-y-5">
-          <section className="grid gap-5 xl:grid-cols-[1fr_340px]">
+          <section className="grid gap-5">
             <div className="border border-zinc-200 bg-white p-4">
               <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                 <div>
@@ -1538,27 +1463,6 @@ export default function MonitorDashboard() {
               </div>
             </div>
 
-            <div className="border border-zinc-200 bg-white p-4">
-              <h2 className="text-lg font-semibold">Report Draft Shape</h2>
-              <div className="mt-4 border border-zinc-200 bg-zinc-50 p-3 text-sm">
-                <p className="font-semibold">{parameters.title.toUpperCase()}</p>
-                <p className="mt-2 text-zinc-600">
-                  Reporting Period: {formatDate(parameters.startDate)} -{" "}
-                  {formatDate(parameters.endDate)}
-                </p>
-                <p className="text-zinc-600">Classification: {parameters.classification}</p>
-              </div>
-              <ol className="mt-4 space-y-2 text-sm text-zinc-700">
-                {reportSections.map((section, index) => (
-                  <li key={section} className="flex gap-3 border-b border-zinc-100 pb-2">
-                    <span className="w-6 shrink-0 font-semibold text-zinc-400">
-                      {String(index + 1).padStart(2, "0")}
-                    </span>
-                    <span>{section}</span>
-                  </li>
-                ))}
-              </ol>
-            </div>
           </section>
 
           <section className="border border-zinc-200 bg-white p-4">
@@ -1656,10 +1560,17 @@ export default function MonitorDashboard() {
             </form>
 
             <div className="mt-4 rounded-md border border-zinc-200 bg-zinc-100/70 p-3 text-sm text-zinc-600">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <span className="font-semibold text-zinc-800">Workflow cue</span>
-                <span className="rounded-full bg-white px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.12em] text-zinc-600">
-                  {nextRecommendedAction}
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                <div className="min-w-0 flex-1">
+                  <div className="text-xs font-semibold uppercase tracking-[0.12em] text-zinc-600">
+                    Workflow cue
+                  </div>
+                  <p className="mt-1 break-words text-sm leading-5 text-zinc-700">
+                    {nextRecommendedAction}
+                  </p>
+                </div>
+                <span className="shrink-0 rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-600">
+                  Next step
                 </span>
               </div>
             </div>
@@ -2179,7 +2090,7 @@ export default function MonitorDashboard() {
                 </div>
               ) : activeModal === "health" ? (
                 <div className="space-y-4">
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <span
                       className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
                         healthStatus.ok ? "bg-emerald-100 text-emerald-800" : "bg-rose-100 text-rose-800"
@@ -2187,11 +2098,23 @@ export default function MonitorDashboard() {
                     >
                       {healthStatus.ok ? "Online" : "Offline"}
                     </span>
+                    <span
+                      className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
+                        healthStatus.mongo?.connected
+                          ? "bg-emerald-100 text-emerald-800"
+                          : "bg-amber-100 text-amber-800"
+                      }`}
+                    >
+                      {healthStatus.mongo?.connected ? "MongoDB connected" : "MongoDB unavailable"}
+                    </span>
                     <span className="rounded-full bg-zinc-100 px-2.5 py-1 text-xs font-semibold text-zinc-700">
                       {healthStatus.snapshotCount} snapshot items
                     </span>
                   </div>
                   <p className="text-sm text-zinc-600">{healthMessage}</p>
+                  {healthStatus.mongo?.message ? (
+                    <p className="mt-2 text-sm text-zinc-500">{healthStatus.mongo.message}</p>
+                  ) : null}
                   <div className="rounded-md border border-zinc-200 bg-zinc-50 p-4">
                     <h4 className="text-sm font-semibold text-zinc-900">Persisted state</h4>
                     <div className="mt-2 space-y-1 text-sm text-zinc-600">

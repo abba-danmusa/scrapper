@@ -1,5 +1,45 @@
 /* eslint-disable @typescript-eslint/no-require-imports */
+const fs = require('fs');
+const path = require('path');
 const express = require('express');
+
+function loadEnvFile() {
+  const candidatePaths = [
+    path.join(__dirname, '.env'),
+    path.join(__dirname, '..', '.env'),
+  ];
+
+  for (const envPath of candidatePaths) {
+    if (!fs.existsSync(envPath)) {
+      continue;
+    }
+
+    const lines = fs.readFileSync(envPath, 'utf8').split(/\r?\n/);
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) {
+        continue;
+      }
+
+      const separatorIndex = trimmed.indexOf('=');
+      if (separatorIndex === -1) {
+        continue;
+      }
+
+      const key = trimmed.slice(0, separatorIndex).trim();
+      const rawValue = trimmed.slice(separatorIndex + 1).trim();
+      if (!key || process.env[key]) {
+        continue;
+      }
+
+      const value = rawValue.replace(/^['"]|['"]$/g, '');
+      process.env[key] = value;
+    }
+  }
+}
+
+loadEnvFile();
+
 const { ingestPipeline } = require('./src/ingest/pipeline');
 const { requestAccessToken, refreshAccessToken, getCurrentTokenState } = require('./src/ingest/sources/acled-auth');
 const { persistTokenResponse } = require('./src/ingest/sources/acled-oauth');
@@ -21,13 +61,14 @@ app.use((req, res, next) => {
   return next();
 });
 
-app.get('/health', (_req, res) => {
+app.get('/health', async (_req, res) => {
   const { getHealthSummary } = require('./src/ingest/store');
   const { getSchedulerStatus } = require('./scheduler');
+  const summary = await getHealthSummary();
   res.json({
     ok: true,
     service: 'scraper-server',
-    ...getHealthSummary(),
+    ...summary,
     scheduler: getSchedulerStatus()
   });
 });
@@ -86,18 +127,14 @@ app.post('/ingest', async (req, res) => {
   }
 });
 
-app.get('/workspaces', (req, res) => {
+app.get('/workspaces', async (req, res) => {
   const requestedStatus = typeof req.query.status === 'string' ? req.query.status.toLowerCase() : null;
-  const workspaces = readWorkspaces();
-  const filtered = requestedStatus
-    ? workspaces.filter((workspace) => (workspace.status || 'draft') === requestedStatus)
-    : workspaces;
-
-  res.json({ ok: true, workspaces: filtered });
+  const workspaces = await readWorkspaces(requestedStatus);
+  res.json({ ok: true, workspaces });
 });
 
-app.get('/workspaces/:workspaceId', (req, res) => {
-  const workspace = getWorkspaceById(req.params.workspaceId);
+app.get('/workspaces/:workspaceId', async (req, res) => {
+  const workspace = await getWorkspaceById(req.params.workspaceId);
   if (!workspace) {
     return res.status(404).json({ ok: false, error: 'Workspace not found' });
   }
@@ -105,17 +142,20 @@ app.get('/workspaces/:workspaceId', (req, res) => {
   return res.json({ ok: true, workspace });
 });
 
-app.post('/workspaces', (req, res) => {
+app.post('/workspaces', async (req, res) => {
   try {
-    const saved = saveWorkspace(req.body || {});
+    const saved = await saveWorkspace(req.body || {});
     res.json({ ok: true, workspace: saved });
   } catch (error) {
     res.status(500).json({ ok: false, error: error instanceof Error ? error.message : 'Unable to save workspace' });
   }
 });
 
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
+  const { getMongoStatus } = require('./src/ingest/store');
+  const mongoState = await getMongoStatus();
   console.log(`Scraper server listening on http://localhost:${PORT}`);
+  console.log(`MongoDB status: ${mongoState.message}`);
 });
 
 // Start optional scheduler

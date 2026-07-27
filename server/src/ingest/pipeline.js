@@ -160,7 +160,7 @@ async function ingestPipeline(payload = {}) {
 
   // Persist a snapshot of the ingested articles for downstream tools
   try {
-    persistArticles(scored, {
+    await persistArticles(scored, {
       sourceHealth: sourceHealth.slice(0, 10),
       lastErrors: lastErrors.slice(-5),
     });
