@@ -224,17 +224,12 @@ const initialSources: Source[] = supportedBackendSources.map((source) => ({ ...s
 
 const initialArticles: Article[] = [];
 
-const reportSections = [
-  "Executive Summary",
-  "Key Developments",
+const reportSections: ReportSection[] = [
   "Context Overview",
-  "Regional Situation Overview",
   "Multisectoral Analysis",
   "Access Constraints",
   "Government and Humanitarian Response",
   "Outlook / Watchpoints",
-  "Source Confidence Notes",
-  "Source List",
 ];
 
 const assignableReportSections: ReportSection[] = [
@@ -521,7 +516,7 @@ export default function MonitorDashboard() {
       });
       setHealthMessage(
         response.ok
-          ? `Connected to ${payload.service ?? "scraper-server"}.`
+          ? `Connected to ${payload.  service ?? "scraper-server"}.`
           : "The scraper health endpoint returned an error.",
       );
     } catch {
@@ -636,7 +631,9 @@ export default function MonitorDashboard() {
   const reportDraft = useMemo(() => {
     const grouped = reportSections.map((section) => ({
       section,
-      items: approvedArticles.filter((article) => article.reportSection === section),
+      items: approvedArticles.filter(
+        (article) => getNormalizedReportSection(article.reportSection) === section,
+      ),
     }));
 
     return grouped.filter((group) => group.items.length > 0);
@@ -919,56 +916,344 @@ export default function MonitorDashboard() {
     }
   }
 
-  function buildReportHtml() {
+function getNormalizedReportSection(section?: ReportSection): ReportSection {
+    if (!section || section === "Regional Situation Overview") {
+      return "Context Overview";
+    }
+    return section;
+  }
+
+  function getReportSectionDisplayTitle(section: ReportSection) {
+    switch (section) {
+      case "Context Overview":
+        return "Context";
+      case "Multisectoral Analysis":
+        return "Multisectoral";
+      case "Access Constraints":
+        return "Access constraints";
+      case "Government and Humanitarian Response":
+        return "Humanitarian and government response";
+      case "Outlook / Watchpoints":
+        return "Outlook / watchpoints";
+      default:
+        return section;
+    }
+  }
+
+  function getContextRegionLabel(region: string) {
+    const normalized = region.trim();
+    const regionMap: Record<string, string> = {
+      "NE Region": "North-East",
+      "NW Region": "North-West",
+      "North Central": "North-Central",
+      Borno: "North-East",
+      Adamawa: "North-East",
+      Yobe: "North-East",
+      Zamfara: "North-West",
+      Katsina: "North-West",
+      Sokoto: "North-West",
+      Kaduna: "North-Central",
+      Kebbi: "North-West",
+      "National Overview": "National Overview",
+    };
+
+    return regionMap[normalized] || normalized;
+  }
+
+  function getMultisectorSubsection(subject: string) {
+    const normalized = subject.toLowerCase();
+    if (normalized.includes("food")) {
+      return "Food security";
+    }
+    if (normalized.includes("health") || normalized.includes("nutrition")) {
+      return "Health and nutrition";
+    }
+    if (normalized.includes("protection")) {
+      return "Protection";
+    }
+    if (normalized.includes("shelter") || normalized.includes("nfi")) {
+      return "Shelter / NFI";
+    }
+    if (normalized.includes("wash")) {
+      return "WASH";
+    }
+
+    return "Other multisectoral issues";
+  }
+
+  function renderSourceCitation(article: Article) {
+    return `[<a href="${escapeHtml(article.url)}" target="_blank" rel="noreferrer">${escapeHtml(article.source)}</a>]`;
+  }
+
+  function renderBulletHtml(article: Article) {
+    return `
+      <li>
+        ${escapeHtml(article.extractedSummary ?? createExtractedSummary(article))} ${renderSourceCitation(article)}
+      </li>
+    `;
+  }
+
+  function buildPublishReadyReportHtml() {
+    const approvedRegions = Array.from(new Set(approvedArticles.map((article) => getContextRegionLabel(article.region))));
+    const approvedSubjects = Array.from(new Set(approvedArticles.map((article) => article.subject)));
+    const approvedSources = Array.from(new Set(approvedArticles.map((article) => article.source)));
+
+    const initialSectionCounts: Record<ReportSection, number> = {
+      "Context Overview": 0,
+      "Regional Situation Overview": 0,
+      "Multisectoral Analysis": 0,
+      "Access Constraints": 0,
+      "Government and Humanitarian Response": 0,
+      "Outlook / Watchpoints": 0,
+    };
+
+    const sectionCounts = reportSections.reduce<Record<ReportSection, number>>((counts, section) => {
+      counts[section] = approvedArticles.filter(
+        (article) => getNormalizedReportSection(article.reportSection) === section,
+      ).length;
+      return counts;
+    }, { ...initialSectionCounts });
+
     const summaryText =
       approvedArticles.length === 0
         ? "No approved source items have been cleared for this report."
-        : `During the reporting period, ${approvedArticles.length} approved source item${
-            approvedArticles.length === 1 ? "" : "s"
-          } were cleared for inclusion across ${
-            new Set(approvedArticles.map((article) => article.region)).size
-          } area scope${approvedArticles.length === 1 ? "" : "s"}.`;
+        : `During the reporting period, ${approvedArticles.length} approved items were cleared for inclusion across ${approvedRegions.length} region${
+            approvedRegions.length === 1 ? "" : "s"
+          } and ${approvedSubjects.length} subject area${approvedSubjects.length === 1 ? "" : "s"}.`;
 
-    const groupedSections = reportDraft
-      .map(
-        (group, groupIndex) => `
-          <h2>${romanNumerals[groupIndex + 1]}. ${escapeHtml(group.section)}</h2>
-          <ul>
-            ${group.items
-              .map(
-                (article) => `
-                  <li>
-                    ${escapeHtml(article.extractedSummary ?? createExtractedSummary(article))}
-                    <strong>Source: ${escapeHtml(article.source)}.</strong>
-                  </li>
-                `,
-              )
-              .join("")}
-          </ul>
-        `,
-      )
+    const sourceCounts = approvedArticles.reduce<Record<string, number>>((counts, article) => {
+      counts[article.source] = (counts[article.source] ?? 0) + 1;
+      return counts;
+    }, {});
+
+    const topSource = Object.entries(sourceCounts).sort((a, b) => b[1] - a[1])[0];
+
+    const keyFindings = [
+      `The report is built from ${approvedArticles.length} approved evidence item${approvedArticles.length === 1 ? "" : "s"}.`,
+      `Context and multisectoral coverage are the strongest sections with ${sectionCounts["Context Overview"]} and ${sectionCounts["Multisectoral Analysis"]} approved item${
+        sectionCounts["Multisectoral Analysis"] === 1 ? "" : "s"
+      }.`,
+      topSource
+        ? `Source coverage is led by ${escapeHtml(topSource[0])} with ${topSource[1]} approved item${topSource[1] === 1 ? "" : "s"}.`
+        : "No source is dominant in the current approved evidence set.",
+    ];
+
+    const buildContextSection = () => {
+      const contextItems = approvedArticles.filter(
+        (article) => getNormalizedReportSection(article.reportSection) === "Context Overview",
+      );
+      if (contextItems.length === 0) {
+        return '<p class="section-note">No approved items are currently assigned to the context section.</p>';
+      }
+
+      const groupedByRegion = contextItems.reduce<Record<string, Article[]>>((groups, article) => {
+        const label = getContextRegionLabel(article.region);
+        groups[label] = groups[label] || [];
+        groups[label].push(article);
+        return groups;
+      }, {});
+
+      const regionOrder = ["North-East", "North-Central", "North-West", "National Overview"];
+      const orderedRegions = [...regionOrder, ...Object.keys(groupedByRegion).filter((region) => !regionOrder.includes(region))];
+
+      return orderedRegions
+        .filter((region) => groupedByRegion[region]?.length)
+        .map((region) => {
+          const items = groupedByRegion[region];
+          return `
+            <div class="subsection">
+              <h3>${escapeHtml(region)}</h3>
+              <p class="section-intro">${items.length} approved item${items.length === 1 ? "" : "s"} support this region.</p>
+              <ul>
+                ${items.map(renderBulletHtml).join("")}
+              </ul>
+            </div>
+          `;
+        })
+        .join("");
+    };
+
+    const buildMultisectorSection = () => {
+      const multisectorItems = approvedArticles.filter(
+        (article) => getNormalizedReportSection(article.reportSection) === "Multisectoral Analysis",
+      );
+      if (multisectorItems.length === 0) {
+        return '<p class="section-note">No approved items are currently assigned to multisectoral analysis.</p>';
+      }
+
+      const groupedByTopic = multisectorItems.reduce<Record<string, Article[]>>((groups, article) => {
+        const subsection = getMultisectorSubsection(article.subject);
+        groups[subsection] = groups[subsection] || [];
+        groups[subsection].push(article);
+        return groups;
+      }, {});
+
+      const topicOrder = [
+        "Food security",
+        "Health and nutrition",
+        "Protection",
+        "Shelter / NFI",
+        "WASH",
+        "Other multisectoral issues",
+      ];
+
+      return topicOrder
+        .filter((topic) => groupedByTopic[topic]?.length)
+        .map((topic) => {
+          const items = groupedByTopic[topic];
+          return `
+            <div class="subsection">
+              <h3>${escapeHtml(topic)}</h3>
+              <ul>
+                ${items.map(renderBulletHtml).join("")}
+              </ul>
+            </div>
+          `;
+        })
+        .join("");
+    };
+
+    const buildAccessSection = () => {
+      const accessItems = approvedArticles.filter(
+        (article) => getNormalizedReportSection(article.reportSection) === "Access Constraints",
+      );
+      if (accessItems.length === 0) {
+        return '<p class="section-note">No approved items are currently assigned to access constraints.</p>';
+      }
+
+      const groupedByRegion = accessItems.reduce<Record<string, Article[]>>((groups, article) => {
+        const label = getContextRegionLabel(article.region);
+        groups[label] = groups[label] || [];
+        groups[label].push(article);
+        return groups;
+      }, {});
+
+      const regionOrder = ["North-East", "North-Central", "North-West", "National Overview"];
+      return regionOrder
+        .filter((region) => groupedByRegion[region]?.length)
+        .map((region) => {
+          const items = groupedByRegion[region];
+          return `
+            <div class="subsection">
+              <h3>${escapeHtml(region)}</h3>
+              <ul>
+                ${items.map(renderBulletHtml).join("")}
+              </ul>
+            </div>
+          `;
+        })
+        .join("");
+    };
+
+    const buildResponseSection = () => {
+      const responseItems = approvedArticles.filter(
+        (article) => getNormalizedReportSection(article.reportSection) === "Government and Humanitarian Response",
+      );
+      if (responseItems.length === 0) {
+        return '<p class="section-note">No approved items are currently assigned to the response section.</p>';
+      }
+
+      const governmentItems = responseItems.filter((article) =>
+        article.subject.toLowerCase().includes("government"),
+      );
+      const humanitarianItems = responseItems.filter((article) =>
+        article.subject.toLowerCase().includes("humanitarian"),
+      );
+      const otherItems = responseItems.filter(
+        (article) =>
+          !article.subject.toLowerCase().includes("government") &&
+          !article.subject.toLowerCase().includes("humanitarian"),
+      );
+
+      return `
+        ${governmentItems.length > 0 ? `
+          <div class="subsection">
+            <h3>Government response</h3>
+            <ul>
+              ${governmentItems.map(renderBulletHtml).join("")}
+            </ul>
+          </div>
+        ` : ""}
+        ${humanitarianItems.length > 0 ? `
+          <div class="subsection">
+            <h3>Humanitarian response</h3>
+            <ul>
+              ${humanitarianItems.map(renderBulletHtml).join("")}
+            </ul>
+          </div>
+        ` : ""}
+        ${otherItems.length > 0 ? `
+          <div class="subsection">
+            <h3>Additional response notes</h3>
+            <ul>
+              ${otherItems.map(renderBulletHtml).join("")}
+            </ul>
+          </div>
+        ` : ""}
+      `;
+    };
+
+    const buildOutlookSection = () => {
+      const outlookItems = approvedArticles.filter(
+        (article) => getNormalizedReportSection(article.reportSection) === "Outlook / Watchpoints",
+      );
+
+      if (outlookItems.length === 0) {
+        return '<p class="section-note">No approved items are currently assigned to outlook or watchpoints.</p>';
+      }
+
+      return `
+        <ul>
+          ${outlookItems.map(renderBulletHtml).join("")}
+        </ul>
+      `;
+    };
+
+    const tocItems = reportSections
+      .map((section, sectionIndex) => {
+        const count = sectionCounts[section];
+        const title = getReportSectionDisplayTitle(section).toUpperCase();
+        return `<li><strong>${romanNumerals[sectionIndex + 1]}.</strong> ${escapeHtml(title)} (${count} item${count === 1 ? "" : "s"})</li>`;
+      })
       .join("");
 
-    const confidenceNotes = approvedArticles
-      .map(
-        (article) => `
-          <li>
-            ${escapeHtml(article.source)}: ${escapeHtml(article.confidence)} confidence.
-            ${escapeHtml(article.reviewerNote || "No additional review note recorded.")}
-          </li>
-        `,
-      )
-      .join("");
+    const sectionHtml = reportSections
+      .map((section, sectionIndex) => {
+        const title = `${romanNumerals[sectionIndex + 1]}. ${getReportSectionDisplayTitle(section).toUpperCase()}`;
+        let body = "";
 
-    const sourceList = approvedArticles
-      .map(
-        (article) => `
-          <li>
-            ${escapeHtml(article.source)} - ${escapeHtml(article.title)}
-            (${escapeHtml(article.url)})
-          </li>
-        `,
-      )
+        switch (section) {
+          case "Context Overview":
+            body = buildContextSection();
+            break;
+          case "Multisectoral Analysis":
+            body = buildMultisectorSection();
+            break;
+          case "Access Constraints":
+            body = buildAccessSection();
+            break;
+          case "Government and Humanitarian Response":
+            body = buildResponseSection();
+            break;
+          case "Outlook / Watchpoints":
+            body = buildOutlookSection();
+            break;
+          default:
+            body = "";
+        }
+
+        return `
+          <section>
+            <h2>${escapeHtml(title)}</h2>
+            <div class="section-intro">${
+              sectionCounts[section] > 0
+                ? `${sectionCounts[section]} approved item${sectionCounts[section] === 1 ? "" : "s"} provide evidence for this section.`
+                : "No approved items are available for this section yet."
+            }</div>
+            ${body}
+          </section>
+        `;
+      })
       .join("");
 
     return `<!doctype html>
@@ -977,33 +1262,45 @@ export default function MonitorDashboard() {
           <meta charset="utf-8" />
           <title>${escapeHtml(parameters.title)}</title>
           <style>
-            body { font-family: Arial, Helvetica, sans-serif; color: #18181b; line-height: 1.55; }
-            h1 { font-size: 20px; margin-bottom: 4px; text-transform: uppercase; }
-            h2 { font-size: 15px; margin-top: 22px; margin-bottom: 8px; }
-            p, li { font-size: 12px; }
-            ul { padding-left: 18px; }
-            .meta { color: #52525b; margin: 0; }
-            .header { border-bottom: 1px solid #d4d4d8; padding-bottom: 12px; margin-bottom: 16px; }
+            body { font-family: Inter, Arial, Helvetica, sans-serif; margin: 0; padding: 28px; color: #111827; line-height: 1.65; background: #fff; }
+            h1 { font-size: 28px; margin: 0 0 10px; letter-spacing: 0.04em; text-transform: uppercase; }
+            h2 { font-size: 18px; margin: 30px 0 10px; color: #111827; }
+            h3 { font-size: 15px; margin: 22px 0 8px; color: #1f2937; }
+            p, li { font-size: 13px; margin: 0; }
+            ul { padding-left: 22px; margin: 10px 0 0; }
+            .meta { color: #4b5563; margin: 0; }
+            .header { padding-bottom: 18px; margin-bottom: 28px; border-bottom: 1px solid #e5e7eb; }
+            .section-intro { margin: 10px 0 14px; color: #374151; font-size: 13px; }
+            .subsection { margin-top: 16px; }
+            .subsection h3 { margin-top: 16px; }
+            .section-note { color: #4b5563; margin-top: 10px; font-size: 13px; }
+            .toc { padding-left: 18px; margin: 10px 0 0; color: #4b5563; }
+            .toc li { margin-bottom: 6px; }
+            a { color: #2563eb; text-decoration: none; }
+            a:hover { text-decoration: underline; }
           </style>
         </head>
         <body>
           <div class="header">
             <h1>${escapeHtml(parameters.title)}</h1>
-            <p class="meta">Reporting Period: ${escapeHtml(
-              formatDate(parameters.startDate),
-            )} - ${escapeHtml(formatDate(parameters.endDate))}</p>
+            <p class="meta">Reporting Period: ${escapeHtml(formatDate(parameters.startDate))} – ${escapeHtml(
+              formatDate(parameters.endDate),
+            )}</p>
             <p class="meta">Classification: ${escapeHtml(parameters.classification)}</p>
+            <p class="meta">Approved items: ${approvedArticles.length}; regions: ${approvedRegions.length}; subjects: ${approvedSubjects.length}.</p>
           </div>
 
-          <h2>I. Executive Summary</h2>
-          <p>${escapeHtml(summaryText)}</p>
-          ${groupedSections}
+          <h2>Key findings</h2>
+          <ul>
+            ${keyFindings.map((finding) => `<li>${escapeHtml(finding)}</li>`).join("")}
+          </ul>
 
-          <h2>Source Confidence Notes</h2>
-          <ul>${confidenceNotes || "<li>No approved source confidence notes.</li>"}</ul>
+          <h2>I. Contents</h2>
+          <ul class="toc">
+            ${tocItems}
+          </ul>
 
-          <h2>Source List</h2>
-          <ul>${sourceList || "<li>No approved sources.</li>"}</ul>
+          ${sectionHtml}
         </body>
       </html>`;
   }
@@ -1126,7 +1423,7 @@ export default function MonitorDashboard() {
   function exportWordDocument() {
     downloadFile(
       `${createSafeFilename(parameters.title)}.doc`,
-      buildReportHtml(),
+      buildPublishReadyReportHtml(),
       "application/msword;charset=utf-8",
     );
   }
@@ -1138,7 +1435,7 @@ export default function MonitorDashboard() {
       return;
     }
 
-    reportWindow.document.write(buildReportHtml());
+    reportWindow.document.write(buildPublishReadyReportHtml());
     reportWindow.document.close();
     reportWindow.focus();
     reportWindow.print();
@@ -1634,90 +1931,41 @@ export default function MonitorDashboard() {
             </div>
           </section>
 
-          <section className="grid gap-5 xl:grid-cols-[360px_1fr]">
-            <div className="border border-zinc-200 bg-white p-4">
+          <section className="grid gap-5">
+            <div className="border border-zinc-200 bg-white p-3">
               <h2 className="text-lg font-semibold">4. Process the queue</h2>
-              <p className="mt-1 text-sm text-zinc-600">
-                Convert queued source material into structured report evidence.
-              </p>
-              <div className="mt-4 grid gap-3">
-                <div
-                  className={`border-l-4 border px-3 py-3 ${
-                    processingQueue.length > 0
-                      ? "border-l-amber-500 border-zinc-200 bg-amber-50"
-                      : "border-l-zinc-300 border-zinc-200 bg-zinc-50"
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm font-semibold text-zinc-600">Queued</span>
-                    {processingQueue.length > 0 && (
-                      <span className="inline-block rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">
-                        Pending
-                      </span>
-                    )}
-                  </div>
-                  <span className="mt-1 block text-2xl font-semibold text-zinc-950">{processingQueue.length}</span>
+              <p className="mt-1 text-sm text-zinc-600">Convert queued material into structured evidence.</p>
+              <div className="mt-3 grid grid-cols-3 gap-3">
+                <div className={`rounded-md p-3 text-center ${processingQueue.length > 0 ? 'bg-amber-50 border border-amber-200' : 'bg-zinc-50 border border-zinc-200'}`}>
+                  <div className="text-xs text-zinc-600">Queued</div>
+                  <div className="text-2xl font-semibold text-zinc-950">{processingQueue.length}</div>
                 </div>
-                <div
-                  className={`border-l-4 border px-3 py-3 ${
-                    reviewQueue.length > 0
-                      ? "border-l-sky-500 border-zinc-200 bg-sky-50"
-                      : "border-l-zinc-300 border-zinc-200 bg-zinc-50"
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm font-semibold text-zinc-600">Review</span>
-                    {reviewQueue.length > 0 && (
-                      <span className="inline-block rounded-full bg-sky-100 px-2 py-0.5 text-xs font-semibold text-sky-800">
-                        Awaiting
-                      </span>
-                    )}
-                  </div>
-                  <span className="mt-1 block text-2xl font-semibold text-zinc-950">{reviewQueue.length}</span>
+                <div className={`rounded-md p-3 text-center ${reviewQueue.length > 0 ? 'bg-sky-50 border border-sky-200' : 'bg-zinc-50 border border-zinc-200'}`}>
+                  <div className="text-xs text-zinc-600">Review</div>
+                  <div className="text-2xl font-semibold text-zinc-950">{reviewQueue.length}</div>
+                  {reviewQueue.length > 0 && <div className="mt-1 inline-block text-xs text-sky-700 rounded-full bg-white px-2 py-0.5">Awaiting</div>}
                 </div>
-                <div
-                  className={`border-l-4 border px-3 py-3 ${
-                    approvedArticles.length > 0
-                      ? "border-l-emerald-500 border-zinc-200 bg-emerald-50"
-                      : "border-l-zinc-300 border-zinc-200 bg-zinc-50"
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm font-semibold text-zinc-600">Approved</span>
-                    {approvedArticles.length > 0 && (
-                      <span className="inline-block rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-800">
-                        Ready
-                      </span>
-                    )}
-                  </div>
-                  <span className="mt-1 block text-2xl font-semibold text-zinc-950">{approvedArticles.length}</span>
+                <div className={`rounded-md p-3 text-center ${approvedArticles.length > 0 ? 'bg-emerald-50 border border-emerald-200' : 'bg-zinc-50 border border-zinc-200'}`}>
+                  <div className="text-xs text-zinc-600">Approved</div>
+                  <div className="text-2xl font-semibold text-zinc-950">{approvedArticles.length}</div>
                 </div>
               </div>
-              <button
-                onClick={processQueuedArticles}
-                className="mt-4 w-full rounded-md bg-zinc-950 px-4 py-2 text-sm font-semibold text-white"
-              >
-                Process all queued material
-              </button>
+              <button onClick={processQueuedArticles} className="mt-3 w-full rounded-md bg-zinc-950 px-4 py-2 text-sm font-semibold text-white">Process queued items</button>
             </div>
 
-            <div className="border border-zinc-200 bg-white p-4">
+            <div className="border border-zinc-200 bg-white p-3">
               <h2 className="text-lg font-semibold">5. Review and approve</h2>
-              <p className="mt-1 text-sm text-zinc-600">
-                Edit extracted language, confirm confidence, and approve only sourced claims.
-              </p>
+              <p className="mt-1 text-sm text-zinc-600">Edit extracted language, confirm confidence, and approve sourced claims.</p>
 
-              <div className="mt-4 grid gap-3">
+              <div className="mt-3 space-y-3">
                 {reviewQueue.length === 0 ? (
-                  <div className="border border-zinc-200 bg-zinc-50 p-4 text-sm text-zinc-600">
-                    No processed items are waiting for review.
-                  </div>
+                  <div className="border border-zinc-200 bg-zinc-50 p-3 text-sm text-zinc-600">No processed items are waiting for review.</div>
                 ) : null}
 
                 {reviewQueue.map((article) => (
-                  <article key={`review-${article.id}`} className="border border-zinc-200 bg-zinc-50 p-4">
+                  <article key={`review-${article.id}`} className="border border-zinc-200 bg-zinc-50 p-3">
                     <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                      <div>
+                      <div className="flex-1">
                         <div className="flex flex-wrap gap-2 text-xs font-semibold text-zinc-500">
                           <span>{formatDate(article.date)}</span>
                           <span>{article.region}</span>
@@ -1879,58 +2127,35 @@ export default function MonitorDashboard() {
               ) : (
                 <div className="mt-5 space-y-5">
                   <section>
-                    <h4 className="font-semibold">I. Executive Summary</h4>
+                    <h4 className="font-semibold">Key findings</h4>
                     <p className="mt-2 text-sm leading-6 text-zinc-700">
-                      During the reporting period, {approvedArticles.length} approved source
-                      item{approvedArticles.length === 1 ? "" : "s"} were cleared for inclusion
-                      across {new Set(approvedArticles.map((article) => article.region)).size} area
-                      scope{approvedArticles.length === 1 ? "" : "s"}. Coverage includes{" "}
-                      {new Set(approvedArticles.map((article) => article.subject)).size} distinct subject
-                      area{new Set(approvedArticles.map((article) => article.subject)).size === 1 ? "" : "s"}.
+                      {approvedArticles.length} approved item{approvedArticles.length === 1 ? "" : "s"} are currently available for the publish-ready draft. The top sections are based on the evidence assigned to the report structure below.
                     </p>
-                    {approvedArticles.length > 0 && (
-                      <div className="mt-3 grid gap-2 border-t border-zinc-200 pt-3 text-xs text-zinc-600 sm:grid-cols-2">
-                        <div>
-                          <span className="font-semibold">Regions:</span>{" "}
-                          {Array.from(new Set(approvedArticles.map((article) => article.region))).join(", ")}
-                        </div>
-                        <div>
-                          <span className="font-semibold">Subjects:</span>{" "}
-                          {Array.from(new Set(approvedArticles.map((article) => article.subject))).join(", ")}
-                        </div>
+                    <div className="mt-3 grid gap-2 border-t border-zinc-200 pt-3 text-xs text-zinc-600 sm:grid-cols-2">
+                      <div>
+                        <span className="font-semibold">Regions:</span>{" "}
+                        {Array.from(new Set(approvedArticles.map((article) => getContextRegionLabel(article.region)))).join(", ")}
                       </div>
-                    )}
+                      <div>
+                        <span className="font-semibold">Subjects:</span>{" "}
+                        {Array.from(new Set(approvedArticles.map((article) => article.subject))).join(", ")}
+                      </div>
+                    </div>
                   </section>
 
                   {reportDraft.map((group, groupIndex) => (
                     <section key={group.section}>
                       <h4 className="font-semibold">
-                        {romanNumerals[groupIndex + 1]}. {group.section}
+                        {romanNumerals[groupIndex + 1]}. {getReportSectionDisplayTitle(group.section)}
                       </h4>
-                      <ul className="mt-2 space-y-2 text-sm leading-6 text-zinc-700">
-                        {group.items.map((article) => (
-                          <li key={`draft-${article.id}`}>
-                            {article.extractedSummary}{" "}
-                            <span className="font-semibold text-zinc-950">
-                              Source: {article.source}.
-                            </span>
-                          </li>
-                        ))}
-                      </ul>
+                      <p className="mt-2 text-sm leading-6 text-zinc-700">
+                        {group.items[0]?.extractedSummary ?? "No example sentence available."}
+                      </p>
+                      <p className="mt-2 text-xs text-zinc-500">
+                        {group.items.length} approved item{group.items.length === 1 ? "" : "s"} in this section.
+                      </p>
                     </section>
                   ))}
-
-                  <section>
-                    <h4 className="font-semibold">Source Confidence Notes</h4>
-                    <ul className="mt-2 space-y-2 text-sm leading-6 text-zinc-700">
-                      {approvedArticles.map((article) => (
-                        <li key={`confidence-${article.id}`}>
-                          {article.source}: {article.confidence} confidence.{" "}
-                          {article.reviewerNote || "No additional review note recorded."}
-                        </li>
-                      ))}
-                    </ul>
-                  </section>
                 </div>
               )}
             </div>
@@ -1957,16 +2182,24 @@ export default function MonitorDashboard() {
                 Reporting Period: {formatDate(parameters.startDate)} - {formatDate(parameters.endDate)}
               </p>
               <p className="text-zinc-600">Classification: {parameters.classification}</p>
-              <ol className="mt-4 space-y-2 text-zinc-700">
-                {reportSections.slice(0, 5).map((section, index) => (
-                  <li key={section} className="flex gap-3 border-b border-zinc-100 pb-2">
-                    <span className="w-6 shrink-0 font-semibold text-zinc-400">
-                      {String(index + 1).padStart(2, "0")}
-                    </span>
-                    <span>{section}</span>
-                  </li>
-                ))}
-              </ol>
+              <div className="mt-4 rounded-lg bg-white p-3 text-zinc-700">
+                <div className="text-xs uppercase tracking-[0.15em] text-zinc-500">Approved report sections</div>
+                {reportDraft.length === 0 ? (
+                  <p className="mt-3 text-sm text-zinc-600">No approved sections yet. Approve reviewed items to fill the report draft.</p>
+                ) : (
+                  <ol className="mt-3 space-y-2 text-sm text-zinc-700">
+                    {reportDraft.map((group, index) => (
+                      <li key={group.section} className="flex flex-col gap-1 rounded-md border border-zinc-200 bg-zinc-50 p-3">
+                        <div className="flex items-center justify-between gap-3 text-sm font-semibold text-zinc-800">
+                          <span>{romanNumerals[index + 1]}. {group.section}</span>
+                          <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-semibold text-zinc-600">{group.items.length} item{group.items.length === 1 ? "" : "s"}</span>
+                        </div>
+                        <p className="text-xs text-zinc-600">{group.items[0]?.extractedSummary ?? "No summary available."}</p>
+                      </li>
+                    ))}
+                  </ol>
+                )}
+              </div>
             </div>
           </section>
         </div>
