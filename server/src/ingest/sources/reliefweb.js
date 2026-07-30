@@ -74,7 +74,7 @@ async function searchReliefWeb({ startDate, endDate, subjects = [], regions = []
   };
 
   const response = await fetchJson(
-    'https://api.reliefweb.int/v1/reports?appname=northern-nigeria-situation-monitor',
+    'https://api.reliefweb.int/v1/reports?appname=' + process.env.APPNAME,
     payload
   );
 
