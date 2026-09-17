@@ -58,11 +58,16 @@ async function searchRss({ subjects = [], regions = [] }) {
         const region = pickRegion(text, regions);
         const subject = pickSubject(text, subjects);
 
+        const parsedDate = item.isoDate || item.pubDate;
+        const normalizedDate = parsedDate && !Number.isNaN(new Date(parsedDate).valueOf())
+          ? new Date(parsedDate).toISOString().slice(0, 10)
+          : new Date().toISOString().slice(0, 10);
+
         return {
           title: item.title || 'Untitled RSS item',
           source: feed.title || feedSource.name || 'RSS Source',
           url: item.link || '',
-          date: item.pubDate ? item.pubDate.slice(0, 10) : new Date().toISOString().slice(0, 10),
+          date: normalizedDate,
           region,
           subject,
           rawText: text

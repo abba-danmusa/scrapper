@@ -38,6 +38,10 @@ const subjectKeywords = [
   { subject: "Government Response", terms: ["government", "authority", "ministry"] },
 ];
 
+function includesAny(text: string, terms: string[]) {
+  return terms.some((term) => text.includes(term.toLowerCase()));
+}
+
 function pickRegion(text: string, requestedRegions: string[]) {
   const normalized = text.toLowerCase();
 
@@ -68,6 +72,28 @@ function pickSubject(text: string, requestedSubjects: string[]) {
   }
 
   return requestedSubjects[0] ?? "Security";
+}
+
+function hasSelectedRegionEvidence(text: string, requestedRegions: string[]) {
+  const normalized = text.toLowerCase();
+
+  if (requestedRegions.includes("National Overview") && /\bnigeria|nigerian\b/.test(normalized)) {
+    return true;
+  }
+
+  return requestedRegions
+    .filter((region) => region !== "National Overview")
+    .some((region) => includesAny(normalized, regionTerms[region as keyof typeof regionTerms] ?? [region]));
+}
+
+function hasSelectedSubjectEvidence(text: string, requestedSubjects: string[]) {
+  const normalized = text.toLowerCase();
+
+  return subjectKeywords.some(
+    (candidate) =>
+      requestedSubjects.includes(candidate.subject) &&
+      includesAny(normalized, candidate.terms),
+  );
 }
 
 export async function POST(request: Request) {
@@ -142,8 +168,12 @@ export async function POST(request: Request) {
         date: fields.date?.created?.slice(0, 10) ?? body.endDate,
         region: pickRegion(text, body.regions),
         subject: pickSubject(text, body.subjects),
+        rawText: text,
+        isRelevant:
+          hasSelectedRegionEvidence(text, body.regions) &&
+          hasSelectedSubjectEvidence(text, body.subjects),
       };
-    }) ?? [];
+    }).filter((article) => article.isRelevant) ?? [];
 
   return Response.json({ articles });
 }

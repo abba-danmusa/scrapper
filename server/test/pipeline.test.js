@@ -53,9 +53,9 @@ test('ingestPipeline continues when one source throws', async () => {
           source: 'HTML',
           url: 'https://example.com/html',
           date: '2026-06-17',
-          region: 'National Overview',
+          region: 'NE Region',
           subject: 'Security',
-          rawText: 'A resilient fallback article.'
+          rawText: 'A resilient fallback article about an armed attack in Borno, northeast Nigeria.'
         }
       ]
     }
@@ -78,9 +78,9 @@ test('ingestPipeline writes a snapshot that can be read back', async () => {
           source: 'HTML',
           url: 'https://example.com/persisted',
           date: '2026-06-18',
-          region: 'National Overview',
+          region: 'NE Region',
           subject: 'Security',
-          rawText: 'Persisted via snapshot test.'
+          rawText: 'Persisted via snapshot test after a security incident in Maiduguri, Borno State.'
         }
       ]
     }
@@ -97,6 +97,39 @@ test('ingestPipeline writes a snapshot that can be read back', async () => {
   assert.ok(healthSummary.sourceHealth.some((entry) => entry.name === 'HTML'));
   assert.ok(Array.isArray(healthState?.runHistory));
   assert.ok(healthState.runHistory.some((entry) => entry.count === result.count));
+});
+
+test('ingestPipeline drops articles without selected region or subject evidence', async () => {
+  const result = await ingestPipeline({
+    ...samplePayload,
+    enabledSources: ['RSS'],
+    sourceFunctions: {
+      searchRss: async () => [
+        {
+          title: 'BRICS and India’s global ambition',
+          source: 'Daily Trust',
+          url: 'https://example.com/brics',
+          date: '2026-09-17',
+          region: 'NE Region',
+          subject: 'Security',
+          rawText: 'BRICS and India’s global ambition focuses on international politics and diplomacy.'
+        },
+        {
+          title: 'Farmers attacked in Zamfara community',
+          source: 'Daily Trust',
+          url: 'https://example.com/zamfara',
+          date: '2026-09-17',
+          region: 'NW Region',
+          subject: 'Security',
+          rawText: 'Armed attackers killed farmers in Zamfara, northwest Nigeria.'
+        }
+      ]
+    }
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.count, 1);
+  assert.equal(result.articles[0].title, 'Farmers attacked in Zamfara community');
 });
 
 test('ingestPipeline enriches articles with summaries and facts', async () => {

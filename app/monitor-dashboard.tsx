@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 
 type Classification = "Internal - Not for Publication" | "Restricted" | "Public Draft";
 type Priority = "Core" | "Useful" | "Specialist";
@@ -51,6 +51,11 @@ type Article = {
   reviewerNote?: string;
   reviewer?: string | null;
   changelog?: Array<{ when: string; action: string; by?: string | null }>;
+  rawText?: string;
+  excerpt?: string;
+  relevanceScore?: number;
+  relevanceReasons?: string[];
+  isRelevant?: boolean;
 };
 
 type WorkspaceStatus = "draft" | "published";
@@ -134,6 +139,11 @@ type IngestedArticle = Pick<Article, "title" | "source" | "url" | "date" | "regi
   summary?: string;
   extractedFacts?: string[];
   confidence?: Confidence;
+  rawText?: string;
+  excerpt?: string;
+  relevanceScore?: number;
+  relevanceReasons?: string[];
+  isRelevant?: boolean;
 };
 
 const allSubjects = [
@@ -164,6 +174,34 @@ const allRegions = [
   "Kaduna",
   "Kebbi",
 ];
+
+const regionEvidenceTerms: Record<string, string[]> = {
+  "NE Region": ["borno", "adamawa", "yobe", "maiduguri", "mandara", "gwoza", "northeast", "north-east", "north east"],
+  "NW Region": ["zamfara", "katsina", "sokoto", "kebbi", "kaduna", "kano", "jigawa", "gusau", "maradun", "northwest", "north-west", "north west"],
+  "North Central": ["niger", "plateau", "benue", "nasarawa", "kogi", "kwara", "fct", "abuja", "north central"],
+  Borno: ["borno", "maiduguri", "gwoza", "mandara"],
+  Adamawa: ["adamawa", "yola", "mubi"],
+  Yobe: ["yobe", "damaturu"],
+  Zamfara: ["zamfara", "gusau", "maradun"],
+  Katsina: ["katsina"],
+  Sokoto: ["sokoto"],
+  Kaduna: ["kaduna"],
+  Kebbi: ["kebbi", "birnin kebbi"],
+};
+
+const subjectEvidenceTerms: Record<string, string[]> = {
+  Economy: ["economy", "inflation", "market", "prices", "currency", "trade", "livelihood", "fuel", "naira"],
+  Security: ["attack", "abduction", "kidnap", "kidnapping", "armed", "bandit", "insurgent", "boko haram", "iswap", "conflict", "violence", "killed", "military", "security"],
+  Nutrition: ["nutrition", "malnutrition", "wasting", "stunting", "sam", "mam"],
+  Health: ["health", "cholera", "outbreak", "disease", "clinic", "hospital", "vaccination"],
+  "Food Security": ["food security", "hunger", "famine", "ipc", "lean season", "food insecurity"],
+  WASH: ["wash", "water", "sanitation", "hygiene", "latrine"],
+  "Government Response": ["government", "authority", "ministry", "lawmakers", "police", "security forces"],
+  "Humanitarian Response": ["humanitarian", "response", "assistance", "relief", "partners", "aid", "unicef", "wfp", "ocha", "unhcr"],
+  Education: ["school", "education", "learning", "teacher", "students"],
+  "Shelter / NFI": ["shelter", "nfi", "non-food", "household items", "displacement camp"],
+  "Access Constraints": ["access", "road", "route", "checkpoint", "movement", "constraint", "restriction"],
+};
 
 const initialParameters: ReportParameters = {
   title: "Weekly Situation Update - Northern Nigeria",
@@ -314,6 +352,47 @@ function createSafeFilename(value: string) {
 
 function toggleListValue(values: string[], value: string) {
   return values.includes(value) ? values.filter((item) => item !== value) : [...values, value];
+}
+
+function textIncludesAny(text: string, terms: string[]) {
+  return terms.some((term) => text.includes(term));
+}
+
+function isIngestedArticleRelevant(article: IngestedArticle, parameters: ReportParameters) {
+  if (article.isRelevant === false) {
+    return false;
+  }
+
+  if (typeof article.relevanceScore === "number" && article.relevanceScore >= 4) {
+    return true;
+  }
+
+  const evidenceText = [
+    article.title,
+    article.rawText,
+    article.excerpt,
+    ...(Array.isArray(article.extractedFacts) ? article.extractedFacts : []),
+  ]
+    .join(" ")
+    .toLowerCase();
+
+  const regionMatched =
+    parameters.regions.length === 0 ||
+    parameters.regions.some((region) => {
+      if (region === "National Overview") {
+        return /\bnigeria|nigerian|borno|adamawa|yobe|zamfara|katsina|sokoto|kebbi|kaduna|kano|jigawa\b/.test(evidenceText);
+      }
+
+      return textIncludesAny(evidenceText, regionEvidenceTerms[region] ?? [region.toLowerCase()]);
+    });
+
+  const subjectMatched =
+    parameters.subjects.length === 0 ||
+    parameters.subjects.some((subject) =>
+      textIncludesAny(evidenceText, subjectEvidenceTerms[subject] ?? [subject.toLowerCase()]),
+    );
+
+  return regionMatched && subjectMatched;
 }
 
 function getReportSection(subject: string): ReportSection {
@@ -568,9 +647,21 @@ export default function MonitorDashboard() {
     () => sources.filter((source) => source.enabled),
     [sources],
   );
-  const approvedArticles = articles.filter((article) => article.status === "Approved");
-  const processingQueue = articles.filter((article) => article.status === "Queued");
-  const reviewQueue = articles.filter(
+  const activeArticles = useMemo(
+    () =>
+      articles.filter(
+        (article) =>
+          parameters.subjects.includes(article.subject) &&
+          parameters.regions.includes(article.region) &&
+          enabledSources.some((source) => source.name === article.source) &&
+          isIngestedArticleRelevant(article, parameters),
+      ),
+    [articles, enabledSources, parameters],
+  );
+  const offParameterArticles = articles.length - activeArticles.length;
+  const approvedArticles = activeArticles.filter((article) => article.status === "Approved");
+  const processingQueue = activeArticles.filter((article) => article.status === "Queued");
+  const reviewQueue = activeArticles.filter(
     (article) => article.status === "Processed" || article.status === "Needs Review",
   );
 
@@ -619,16 +710,7 @@ export default function MonitorDashboard() {
     return "Enable at least one source to start building the report.";
   }, [approvedArticles.length, enabledSources.length, processingQueue.length, reviewQueue.length]);
 
-  const filteredArticles = useMemo(
-    () =>
-      articles.filter(
-        (article) =>
-          parameters.subjects.includes(article.subject) &&
-          parameters.regions.includes(article.region) &&
-          enabledSources.some((source) => source.name === article.source),
-      ),
-    [articles, enabledSources, parameters.regions, parameters.subjects],
-  );
+  const filteredArticles = activeArticles;
 
   const reportDraft = useMemo(() => {
     const grouped = reportSections.map((section) => ({
@@ -860,6 +942,10 @@ export default function MonitorDashboard() {
       }
 
       const incomingArticles = payload.articles ?? [];
+      const relevantIncomingArticles = incomingArticles.filter((article) =>
+        isIngestedArticleRelevant(article, parameters),
+      );
+      const irrelevantCount = incomingArticles.length - relevantIncomingArticles.length;
 
       let newArticleCount = 0;
       let duplicateCount = 0;
@@ -869,7 +955,7 @@ export default function MonitorDashboard() {
           currentArticles.map((article) => `${article.url}|${article.title}`),
         );
         const nextId = Math.max(0, ...currentArticles.map((article) => article.id)) + 1;
-        const newArticles = incomingArticles
+        const newArticles = relevantIncomingArticles
           .filter((article) => {
             const key = `${article.url}|${article.title}`;
             const isDuplicate = existingKeys.has(key);
@@ -890,6 +976,11 @@ export default function MonitorDashboard() {
               subject: article.subject,
               confidence: (article.confidence as Confidence | undefined) ?? "High",
               status: "Processed" as IngestionStatus,
+              rawText: article.rawText,
+              excerpt: article.excerpt,
+              relevanceScore: article.relevanceScore,
+              relevanceReasons: article.relevanceReasons,
+              isRelevant: article.isRelevant,
             };
 
             return {
@@ -905,7 +996,17 @@ export default function MonitorDashboard() {
         return [...newArticles, ...currentArticles];
       });
 
-      setIngestionMessage(formatIngestResultMessage(payload, incomingArticles, newArticleCount, duplicateCount));
+      const baseMessage = formatIngestResultMessage(
+        payload,
+        incomingArticles,
+        newArticleCount,
+        duplicateCount,
+      );
+      setIngestionMessage(
+        irrelevantCount > 0
+          ? `${baseMessage} ${irrelevantCount} off-parameter item${irrelevantCount === 1 ? "" : "s"} skipped by relevance checks.`
+          : baseMessage,
+      );
       setHealthStatus((current) => ({
         ...current,
         sourceHealth: payload.sourceHealth ?? current.sourceHealth,
@@ -1468,18 +1569,7 @@ function getNormalizedReportSection(section?: ReportSection): ReportSection {
   }
 
   async function exportDocx() {
-    try {
-      const html = buildPublishReadyReportHtml();
-      // dynamic import to keep bundle size smaller when not used
-      // @ts-ignore - html-docx-js has no bundled TypeScript types
-      const mod = await import('html-docx-js/dist/html-docx');
-      const blob = typeof mod.asBlob === 'function' ? mod.asBlob(html) : new Blob([html], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
-      downloadFile(`${createSafeFilename(parameters.title)}.docx`, blob, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
-    } catch (error) {
-      console.error('Failed to export docx', error);
-      // fallback to .doc
-      exportWordDocument();
-    }
+    exportWordDocument();
   }
 
   async function callEmbeddingsClassify(article: Article) {
@@ -1909,6 +1999,12 @@ function getNormalizedReportSection(section?: ReportSection): ReportSection {
 
             <div className="mt-4 border border-zinc-200 bg-zinc-50 p-3 text-sm text-zinc-600">
               {ingestionMessage}
+              {offParameterArticles > 0 ? (
+                <div className="mt-2 rounded-md bg-amber-50 px-3 py-2 text-amber-800">
+                  {offParameterArticles} stored item{offParameterArticles === 1 ? "" : "s"} hidden
+                  because they do not match the selected parameters or relevance evidence.
+                </div>
+              ) : null}
             </div>
 
             <form onSubmit={addArticle} className="mt-4 grid gap-3 border border-zinc-200 bg-zinc-50 p-3 lg:grid-cols-6">

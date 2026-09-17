@@ -40,9 +40,13 @@ function extractFacts(article) {
 function enrichArticle(article) {
   const normalized = article;
   const text = normalized.rawText || normalized.excerpt || normalized.title || '';
-  const summary = text
-    ? `${normalized.title || 'Article'} summarizes a ${normalized.subject || 'security'} development in ${normalized.region || 'the region'} with relevant reporting from ${normalized.source || 'the source network'}.`
-    : `${normalized.title || 'Article'} was ingested from ${normalized.source || 'the source network'}.`;
+  const firstSentence = text.split(/(?<=[.!?])\s+/).find(Boolean);
+  const evidenceNote = Array.isArray(normalized.relevanceReasons)
+    ? ` Evidence: ${normalized.relevanceReasons.join('; ')}.`
+    : '';
+  const summary = firstSentence
+    ? `${firstSentence.slice(0, 260)} Source: ${normalized.source || 'source network'}.${evidenceNote}`
+    : `${normalized.title || 'Article'} was ingested from ${normalized.source || 'the source network'}.${evidenceNote}`;
 
   return {
     ...normalized,
