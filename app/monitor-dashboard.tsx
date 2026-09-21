@@ -339,7 +339,10 @@ function formatDate(date: string) {
 }
 
 function createExtractedSummary(article: Article) {
-  return `${article.title}. The item is relevant to ${article.region} and has been tagged under ${article.subject.toLowerCase()} for inclusion in the weekly situation update.`;
+  const sourceText = article.rawText || article.excerpt || article.title;
+  const normalized = sourceText.replace(/\s+/g, " ").trim();
+  const firstTwoSentences = normalized.match(/[^.!?]+[.!?]+/g)?.slice(0, 2).join(" ").replace(/\s+/g, " ").trim();
+  return firstTwoSentences || (normalized.endsWith(".") ? normalized : `${normalized}.`);
 }
 
 function createSafeFilename(value: string) {
@@ -1095,11 +1098,7 @@ function getNormalizedReportSection(section?: ReportSection): ReportSection {
 
   function generatePublishSentence(article: Article) {
     const summary = article.extractedSummary ?? createExtractedSummary(article);
-    const date = article.date ? `${formatDate(article.date)} — ` : "";
-    const region = article.region ? `${article.region}: ` : "";
-
-    const sentence = `${date}${region}${summary}`;
-    return escapeHtml(sentence);
+    return escapeHtml(summary.replace(/^[-*•]\s*/, "").trim());
   }
 
   function classifyArticleSection(article: Article): ReportSection {
@@ -1136,8 +1135,6 @@ function getNormalizedReportSection(section?: ReportSection): ReportSection {
   function buildPublishReadyReportHtml() {
     const approvedRegions = Array.from(new Set(approvedArticles.map((article) => getContextRegionLabel(article.region))));
     const approvedSubjects = Array.from(new Set(approvedArticles.map((article) => article.subject)));
-    const approvedSources = Array.from(new Set(approvedArticles.map((article) => article.source)));
-
     const initialSectionCounts: Record<ReportSection, number> = {
       "Context Overview": 0,
       "Regional Situation Overview": 0,
@@ -1154,29 +1151,10 @@ function getNormalizedReportSection(section?: ReportSection): ReportSection {
       return counts;
     }, { ...initialSectionCounts });
 
-    const summaryText =
-      approvedArticles.length === 0
-        ? "No approved source items have been cleared for this report."
-        : `During the reporting period, ${approvedArticles.length} approved items were cleared for inclusion across ${approvedRegions.length} region${
-            approvedRegions.length === 1 ? "" : "s"
-          } and ${approvedSubjects.length} subject area${approvedSubjects.length === 1 ? "" : "s"}.`;
-
-    const sourceCounts = approvedArticles.reduce<Record<string, number>>((counts, article) => {
-      counts[article.source] = (counts[article.source] ?? 0) + 1;
-      return counts;
-    }, {});
-
-    const topSource = Object.entries(sourceCounts).sort((a, b) => b[1] - a[1])[0];
-
-    const keyFindings = [
-      `The report is built from ${approvedArticles.length} approved evidence item${approvedArticles.length === 1 ? "" : "s"}.`,
-      `Context and multisectoral coverage are the strongest sections with ${sectionCounts["Context Overview"]} and ${sectionCounts["Multisectoral Analysis"]} approved item${
-        sectionCounts["Multisectoral Analysis"] === 1 ? "" : "s"
-      }.`,
-      topSource
-        ? `Source coverage is led by ${escapeHtml(topSource[0])} with ${topSource[1]} approved item${topSource[1] === 1 ? "" : "s"}.`
-        : "No source is dominant in the current approved evidence set.",
-    ];
+    const keyFindings = approvedArticles
+      .filter((article) => article.confidence === "High")
+      .concat(approvedArticles.filter((article) => article.confidence !== "High"))
+      .slice(0, 4);
 
     const buildContextSection = () => {
       const contextItems = approvedArticles.filter(
@@ -1203,7 +1181,6 @@ function getNormalizedReportSection(section?: ReportSection): ReportSection {
           return `
             <div class="subsection">
               <h3>${escapeHtml(region)}</h3>
-              <p class="section-intro">${items.length} approved item${items.length === 1 ? "" : "s"} support this region.</p>
               <ul>
                 ${items.map(renderBulletHtml).join("")}
               </ul>
@@ -1385,11 +1362,6 @@ function getNormalizedReportSection(section?: ReportSection): ReportSection {
         return `
           <section>
             <h2>${escapeHtml(title)}</h2>
-            <div class="section-intro">${
-              sectionCounts[section] > 0
-                ? `${sectionCounts[section]} approved item${sectionCounts[section] === 1 ? "" : "s"} provide evidence for this section.`
-                : "No approved items are available for this section yet."
-            }</div>
             ${body}
           </section>
         `;
@@ -1432,7 +1404,9 @@ function getNormalizedReportSection(section?: ReportSection): ReportSection {
 
           <h2>Key findings</h2>
           <ul>
-            ${keyFindings.map((finding) => `<li>${escapeHtml(finding)}</li>`).join("")}
+            ${keyFindings.length > 0
+              ? keyFindings.map(renderBulletHtml).join("")
+              : '<li>No approved evidence is available for this reporting period.</li>'}
           </ul>
 
           <h2>I. Contents</h2>

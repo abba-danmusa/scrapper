@@ -155,10 +155,8 @@ app.post('/llm-summarize', async (req, res) => {
     res.json({ ok: true, summary });
   } catch (error) {
     console.error('LLM summarize failed', error);
-    const fallbackSummary = req.body.extractedSummary || (req.body.title ? `${req.body.title}` : 'No summary available');
-    const date = req.body.date ? `${new Date(req.body.date).toISOString().split('T')[0]} — ` : '';
-    const region = req.body.region ? `${req.body.region}: ` : '';
-    res.json({ ok: true, summary: `${date}${region}${fallbackSummary}` });
+    const fallbackSummary = req.body.rawText || req.body.excerpt || req.body.extractedSummary || req.body.title || 'No summary available.';
+    res.json({ ok: true, summary: fallbackSummary.replace(/\s+/g, ' ').trim() });
   }
 });
 

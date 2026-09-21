@@ -98,10 +98,10 @@ async function classifyWithEmbeddings(article) {
 }
 
 function summarizeFallback(article) {
-  const summary = article.extractedSummary || article.rawText || article.title || 'No summary available';
-  const date = article.date ? `${new Date(article.date).toISOString().split('T')[0]} — ` : '';
-  const region = article.region ? `${article.region}: ` : '';
-  return `${date}${region}${summary}`;
+  const sourceText = article.rawText || article.excerpt || article.extractedSummary || article.title || 'No summary available.';
+  const normalized = sourceText.replace(/\s+/g, ' ').trim();
+  const firstTwoSentences = normalized.match(/[^.!?]+[.!?]+/g)?.slice(0, 2).join(' ').replace(/\s+/g, ' ').trim();
+  return firstTwoSentences || (normalized.endsWith('.') ? normalized : `${normalized}.`);
 }
 
 async function summarizeArticleWithLLM(article) {
@@ -110,13 +110,35 @@ async function summarizeArticleWithLLM(article) {
     return summarizeFallback(article);
   }
 
-  const articleText = `${article.title || ''}\n${article.rawText || article.extractedSummary || ''}`.trim();
-  const prompt = `Produce one concise publish-ready sentence for a humanitarian situation report. Mention the region if available, use neutral factual language, and include an inline source citation placeholder like [Source]. Do not add headings.\n\nInput:\n${articleText}`;
+  const articleText = (article.rawText || article.excerpt || article.extractedSummary || '').slice(0, 6000);
+  const prompt = `You are editing an internal humanitarian situation report on northern Nigeria.
+
+Rewrite the evidence below as one publish-ready analytical bullet of 35-65 words.
+
+Rules:
+- Lead with the event, change, or finding; do not lead with the article title.
+- State the location and date only when supplied in the evidence.
+- Preserve reported figures, attribution, uncertainty, and tense exactly.
+- Explain direct humanitarian or operational significance only when supported by the evidence.
+- Use restrained, neutral English. Avoid vague phrases such as "highlights concerns", "remains volatile", or "is relevant to".
+- Do not invent causes, trends, comparisons, consequences, or affected groups.
+- Do not add a heading, source label, citation, date prefix, region prefix, or commentary about the task.
+- Return one paragraph only.
+
+Metadata:
+Title: ${article.title || 'Not supplied'}
+Date: ${article.date || 'Not supplied'}
+Region: ${article.region || 'Not supplied'}
+Subject: ${article.subject || 'Not supplied'}
+Source: ${article.source || 'Not supplied'}
+
+Evidence:
+${articleText || article.title || 'No evidence supplied'}`;
 
   const response = await client.responses.create({
     model: 'gpt-4.1-mini',
     input: prompt,
-    max_output_tokens: 80,
+    max_output_tokens: 140,
   });
 
   const output = response.output?.[0]?.content?.[0]?.text?.trim();
@@ -124,7 +146,11 @@ async function summarizeArticleWithLLM(article) {
     return summarizeFallback(article);
   }
 
-  return output.replace(/\s+/g, ' ').trim();
+  return output
+    .replace(/^[-*•]\s*/, '')
+    .replace(/\[(?:source|citation)[^\]]*\]\.?$/i, '')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 module.exports = {
